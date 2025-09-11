@@ -4,7 +4,10 @@ __pycache__/
 .venv/
 venv/
 .env
-.env.*
+.env
+.env.local
+.env.dev
+.env.production
 .ipynb_checkpoints/
 node_modules/
 dist/
