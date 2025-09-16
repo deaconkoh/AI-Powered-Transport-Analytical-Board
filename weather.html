@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{title}} Weather</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" rel="stylesheet">
+</head>
+<body>
+    <h1>{{title}} Weather</h1>
+
+    <p> {{ status }} and {{ temp }} &deg;</p>
+    <p> Feels like {{ feels_like }} &deg;</p>
+    <form method="POST" action="/get_weather">
+        <label for="location">Enter Location:</label>
+        <input type="text" id="location" name="location" placeholder="e.g. Punggol Coast" required>
+        <button type="submit">Get Weather</button>
+</body>
+</html>
