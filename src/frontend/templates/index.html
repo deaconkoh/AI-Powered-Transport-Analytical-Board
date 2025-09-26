@@ -1,19 +1,145 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{title}} Weather</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" rel="stylesheet">
-</head>
-<body>
-    <h1>{{title}} Weather</h1>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{{ title or "Routing Demo" }}</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet-draw/dist/leaflet.draw.css"
+    />
+    <style>
+      body {
+        font-family: system-ui, Arial, sans-serif;
+        margin: 0;
+        padding: 1rem;
+      }
+      #map {
+        height: 520px;
+        margin-top: 1rem;
+      }
+      form > * {
+        margin-right: 0.5rem;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Route + Polygon</h1>
 
-    <p> {{ status }} and {{ temp }} &deg;</p>
-    <p> Feels like {{ feels_like }} &deg;</p>
-    <form method="POST" action="/get_weather">
-        <label for="location">Enter Location:</label>
-        <input type="text" id="location" name="location" placeholder="e.g. Punggol Coast" required>
-        <button type="submit">Get Weather</button>
-</body>
+    <form id="routeForm">
+      <label
+        >Origin (lat,lng):
+        <input type="text" id="origin" placeholder="1.281,103.863" required />
+      </label>
+      <label
+        >Destination (lat,lng):
+        <input type="text" id="dest" placeholder="1.352,103.819" required />
+      </label>
+      <label
+        ><input type="checkbox" id="avoidERP" checked /> Avoid ERP
+        (tolls)</label
+      >
+      <label><input type="checkbox" id="avoidHighway" /> Avoid Highways</label>
+      <label><input type="checkbox" id="fastest" checked /> Fastest</label>
+      <button type="submit">Get Route</button>
+    </form>
+
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-draw/dist/leaflet.draw.js"></script>
+    <script src="https://unpkg.com/@mapbox/polyline"></script>
+    <script>
+      // Init map
+      const map = L.map("map").setView([1.3521, 103.8198], 12);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: "© OpenStreetMap contributors",
+      }).addTo(map);
+
+      // Draw controls (polygon)
+      const drawnItems = new L.FeatureGroup();
+      map.addLayer(drawnItems);
+      map.addControl(
+        new L.Control.Draw({
+          draw: {
+            polygon: true,
+            polyline: false,
+            rectangle: false,
+            circle: false,
+            marker: false,
+            circlemarker: false,
+          },
+          edit: { featureGroup: drawnItems },
+        })
+      );
+      map.on(L.Draw.Event.CREATED, (e) => drawnItems.addLayer(e.layer));
+
+      let currentRouteLayer = null;
+
+      // Helper: parse "lat,lng"
+      function parseLatLng(str) {
+        const [lat, lng] = (str || "").split(",").map(Number);
+        if (Number.isFinite(lat) && Number.isFinite(lng)) return [lat, lng];
+        return null;
+      }
+
+      document
+        .getElementById("routeForm")
+        .addEventListener("submit", async (e) => {
+          e.preventDefault();
+
+          const origin = parseLatLng(document.getElementById("origin").value);
+          const dest = parseLatLng(document.getElementById("dest").value);
+          if (!origin || !dest)
+            return alert(
+              "Please enter valid lat,lng for origin and destination"
+            );
+
+          const filters = {
+            avoidERP: document.getElementById("avoidERP").checked,
+            avoidHighway: document.getElementById("avoidHighway").checked,
+            fastest: document.getElementById("fastest").checked,
+          };
+
+          try {
+            const resp = await fetch("/route", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ origin, destination: dest, filters }),
+            });
+
+            // If server returned an error JSON, show it
+            if (!resp.ok) {
+              const txt = await resp.text();
+              console.error("Route error:", txt);
+              alert("Route error: " + txt);
+              return;
+            }
+
+            const data = await resp.json();
+            console.log("Route response:", data);
+
+            if (!data.overview_polyline) {
+              alert("No route polyline returned");
+              return;
+            }
+
+            // Decode Google encoded polyline using @mapbox/polyline
+            const coords = polyline
+              .decode(data.overview_polyline)
+              .map(([lat, lng]) => [lat, lng]);
+
+            // Remove previous route
+            if (currentRouteLayer) map.removeLayer(currentRouteLayer);
+
+            currentRouteLayer = L.polyline(coords, { weight: 5 }).addTo(map);
+            map.fitBounds(currentRouteLayer.getBounds());
+          } catch (err) {
+            console.error(err);
+            alert("Network error: " + err);
+          }
+        });
+    </script>
+  </body>
 </html>
