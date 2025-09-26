@@ -1,0 +1,54 @@
+body {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    background: linear-gradient(135deg, #74ebd5 0%, #ACB6E5 100%);
+    margin: 0;
+    padding: 0;
+    min-height: 100vh;
+}
+
+.weather-app {
+    max-width: 350px;
+    margin: 40px auto;
+    background: #fff;
+    border-radius: 16px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.12);
+    padding: 24px 32px;
+    text-align: center;
+}
+
+.weather-app h1 {
+    font-size: 2rem;
+    margin-bottom: 12px;
+    color: #333;
+}
+
+.weather-info {
+    margin: 18px 0;
+}
+
+.temp {
+    font-size: 3rem;
+    font-weight: bold;
+    color: #2193b0;
+}
+
+.condition {
+    font-size: 1.2rem;
+    color: #555;
+    margin-bottom: 8px;
+}
+
+.details {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 16px;
+    font-size: 1rem;
+    color: #666;
+}
+
+.icon {
+    width: 64px;
+    height: 64px;
+    margin: 0 auto 12px;
+    display: block;
+}
