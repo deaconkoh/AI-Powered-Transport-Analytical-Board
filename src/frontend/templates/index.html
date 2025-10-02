@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>{{ title or "Routing Demo" }}</title>
+    <title>Routing Demo</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
     <link
       rel="stylesheet"
@@ -19,8 +19,52 @@
         height: 520px;
         margin-top: 1rem;
       }
-      form > * {
-        margin-right: 0.5rem;
+      form {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 0.5rem;
+        margin-bottom: 1rem;
+      }
+      form label {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+      }
+      form input[type="text"] {
+        padding: 0.5rem;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+      }
+      .checkbox-group {
+        display: flex;
+        gap: 1rem;
+        align-items: center;
+      }
+      .checkbox-group label {
+        flex-direction: row;
+        gap: 0.25rem;
+      }
+      button {
+        padding: 0.5rem 1rem;
+        background: #007bff;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 1rem;
+      }
+      button:hover {
+        background: #0056b3;
+      }
+      .info {
+        margin-top: 0.5rem;
+        padding: 0.5rem;
+        background: #f0f0f0;
+        border-radius: 4px;
+        display: none;
+      }
+      .info.show {
+        display: block;
       }
     </style>
   </head>
@@ -28,22 +72,45 @@
     <h1>Route + Polygon</h1>
 
     <form id="routeForm">
-      <label
-        >Origin (lat,lng):
-        <input type="text" id="origin" placeholder="1.281,103.863" required />
+      <label>
+        Origin (address or lat,lng):
+        <input 
+          type="text" 
+          id="origin" 
+          placeholder="Changi Airport, Singapore or 1.281,103.863" 
+          required 
+        />
       </label>
-      <label
-        >Destination (lat,lng):
-        <input type="text" id="dest" placeholder="1.352,103.819" required />
+      
+      <label>
+        Destination (address or lat,lng):
+        <input 
+          type="text" 
+          id="dest" 
+          placeholder="Marina Bay Sands, Singapore or 1.352,103.819" 
+          required 
+        />
       </label>
-      <label
-        ><input type="checkbox" id="avoidERP" checked /> Avoid ERP
-        (tolls)</label
-      >
-      <label><input type="checkbox" id="avoidHighway" /> Avoid Highways</label>
-      <label><input type="checkbox" id="fastest" checked /> Fastest</label>
+
+      <div class="checkbox-group">
+        <label>
+          <input type="checkbox" id="avoidERP" checked />
+          Avoid ERP (tolls)
+        </label>
+        <label>
+          <input type="checkbox" id="avoidHighway" />
+          Avoid Highways
+        </label>
+        <label>
+          <input type="checkbox" id="fastest" checked />
+          Fastest
+        </label>
+      </div>
+
       <button type="submit">Get Route</button>
     </form>
+
+    <div id="routeInfo" class="info"></div>
 
     <div id="map"></div>
 
@@ -76,31 +143,59 @@
       map.on(L.Draw.Event.CREATED, (e) => drawnItems.addLayer(e.layer));
 
       let currentRouteLayer = null;
+      let originMarker = null;
+      let destMarker = null;
 
-      // Helper: parse "lat,lng"
-      function parseLatLng(str) {
-        const [lat, lng] = (str || "").split(",").map(Number);
-        if (Number.isFinite(lat) && Number.isFinite(lng)) return [lat, lng];
-        return null;
+      // Helper: parse "lat,lng" or return the string as-is (address)
+      function parseInput(str) {
+        const trimmed = (str || "").trim();
+        const parts = trimmed.split(",").map(s => s.trim());
+        
+        // Check if it's coordinates (two numbers)
+        if (parts.length === 2) {
+          const [lat, lng] = parts.map(Number);
+          if (Number.isFinite(lat) && Number.isFinite(lng)) {
+            return [lat, lng];
+          }
+        }
+        
+        // Otherwise treat as address
+        return trimmed;
+      }
+
+      function showInfo(message, type = 'info') {
+        const infoDiv = document.getElementById('routeInfo');
+        infoDiv.textContent = message;
+        infoDiv.className = 'info show';
+        infoDiv.style.background = type === 'error' ? '#ffebee' : '#e3f2fd';
+        infoDiv.style.color = type === 'error' ? '#c62828' : '#1565c0';
+      }
+
+      function hideInfo() {
+        document.getElementById('routeInfo').className = 'info';
       }
 
       document
         .getElementById("routeForm")
         .addEventListener("submit", async (e) => {
           e.preventDefault();
+          hideInfo();
 
-          const origin = parseLatLng(document.getElementById("origin").value);
-          const dest = parseLatLng(document.getElementById("dest").value);
-          if (!origin || !dest)
-            return alert(
-              "Please enter valid lat,lng for origin and destination"
-            );
+          const origin = parseInput(document.getElementById("origin").value);
+          const dest = parseInput(document.getElementById("dest").value);
+          
+          if (!origin || !dest) {
+            showInfo("Please enter valid addresses or coordinates", 'error');
+            return;
+          }
 
           const filters = {
             avoidERP: document.getElementById("avoidERP").checked,
             avoidHighway: document.getElementById("avoidHighway").checked,
             fastest: document.getElementById("fastest").checked,
           };
+
+          showInfo("Calculating route...");
 
           try {
             const resp = await fetch("/route", {
@@ -109,11 +204,10 @@
               body: JSON.stringify({ origin, destination: dest, filters }),
             });
 
-            // If server returned an error JSON, show it
             if (!resp.ok) {
               const txt = await resp.text();
               console.error("Route error:", txt);
-              alert("Route error: " + txt);
+              showInfo("Route error: " + txt, 'error');
               return;
             }
 
@@ -121,23 +215,47 @@
             console.log("Route response:", data);
 
             if (!data.overview_polyline) {
-              alert("No route polyline returned");
+              showInfo("No route polyline returned", 'error');
               return;
             }
 
-            // Decode Google encoded polyline using @mapbox/polyline
+            // Decode Google encoded polyline
             const coords = polyline
               .decode(data.overview_polyline)
               .map(([lat, lng]) => [lat, lng]);
 
-            // Remove previous route
+            // Remove previous route and markers
             if (currentRouteLayer) map.removeLayer(currentRouteLayer);
+            if (originMarker) map.removeLayer(originMarker);
+            if (destMarker) map.removeLayer(destMarker);
 
-            currentRouteLayer = L.polyline(coords, { weight: 5 }).addTo(map);
-            map.fitBounds(currentRouteLayer.getBounds());
+            // Draw route
+            currentRouteLayer = L.polyline(coords, { 
+              color: '#007bff',
+              weight: 5,
+              opacity: 0.7
+            }).addTo(map);
+
+            // Add markers for start and end
+            originMarker = L.marker(coords[0], {
+              title: 'Origin'
+            }).addTo(map).bindPopup('Origin');
+            
+            destMarker = L.marker(coords[coords.length - 1], {
+              title: 'Destination'
+            }).addTo(map).bindPopup('Destination');
+
+            // Fit map to route
+            map.fitBounds(currentRouteLayer.getBounds(), { padding: [50, 50] });
+
+            // Show route info
+            const distance = data.distance_km;
+            const duration = Math.round(data.eta_seconds / 60);
+            showInfo(`Route found: ${distance} km, ~${duration} minutes`);
+
           } catch (err) {
             console.error(err);
-            alert("Network error: " + err);
+            showInfo("Network error: " + err.message, 'error');
           }
         });
     </script>
