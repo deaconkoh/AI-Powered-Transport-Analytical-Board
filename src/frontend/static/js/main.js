@@ -97,6 +97,127 @@ function formatDuration(seconds) {
   return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
 }
 
+// Get coordinates from input (either parsed or from route endpoint)
+async function getCoordinates(input) {
+  // Try to parse as coordinates first
+  const coords = parseLatLng(input);
+  if (coords) return coords;
+  
+  // If it's an address, we'll need to get coordinates from the route calculation
+  // This will be handled after we have the route
+  return null;
+}
+
+// Call AI prediction endpoint
+async function fetchAIPrediction(originCoords, destCoords) {
+  try {
+    console.log("Calling AI prediction with:", { originCoords, destCoords });
+    
+    const response = await fetch("/predict_route", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        origin: originCoords,
+        destination: destCoords
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      console.warn("AI prediction not available:", errorData.error);
+      return null;
+    }
+
+    const prediction = await response.json();
+    console.log("AI Prediction result:", prediction);
+    return prediction;
+  } catch (error) {
+    console.warn("AI prediction failed:", error);
+    return null;
+  }
+}
+
+// Display AI predictions in the UI
+function displayAIPredictions(prediction) {
+  if (!prediction) return;
+  
+  // Create or update AI predictions section
+  let aiSection = document.getElementById("aiPredictions");
+  if (!aiSection) {
+    aiSection = document.createElement("div");
+    aiSection.id = "aiPredictions";
+    aiSection.className = "route-info";
+    aiSection.innerHTML = `
+      <div class="route-info-title">🤖 AI Traffic Predictions</div>
+      <div id="aiPredictionsContent"></div>
+    `;
+    routeInfo.parentNode.insertBefore(aiSection, routeInfo.nextSibling);
+  }
+
+  const content = document.getElementById("aiPredictionsContent");
+  
+  if (prediction.error) {
+    content.innerHTML = `
+      <div style="color: #e53e3e; font-size: 0.875rem;">
+        ⚠️ AI prediction temporarily unavailable
+      </div>
+    `;
+    return;
+  }
+
+  const trafficConditions = prediction.traffic_conditions || {};
+  const aiInsights = prediction.ai_insights || {};
+  
+  let html = `
+    <div class="route-stats">
+      <div class="stat-item">
+        <div class="stat-value" style="color: ${
+          trafficConditions.predicted_congestion_level === 'HEAVY' ? '#e53e3e' : 
+          trafficConditions.predicted_congestion_level === 'MODERATE' ? '#d69e2e' : '#38a169'
+        }">${trafficConditions.predicted_congestion_level || 'MODERATE'}</div>
+        <div class="stat-label">Congestion Level</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-value">${Math.round((trafficConditions.overall_confidence || 0.5) * 100)}%</div>
+        <div class="stat-label">Confidence</div>
+      </div>
+    </div>
+  `;
+
+  // Add risk factors if available
+  if (aiInsights.risk_factors && aiInsights.risk_factors.length > 0) {
+    html += `
+      <div style="margin-top: 1rem; padding: 0.75rem; background: #fffaf0; border-radius: 8px; border-left: 4px solid #ed8936;">
+        <div style="font-size: 0.8125rem; font-weight: 600; color: #744210; margin-bottom: 0.5rem;">⚠️ Risk Factors</div>
+        <ul style="font-size: 0.75rem; color: #744210; margin: 0; padding-left: 1rem;">
+          ${aiInsights.risk_factors.map(factor => `<li>${factor}</li>`).join('')}
+        </ul>
+      </div>
+    `;
+  }
+
+  // Add recommended departure time
+  if (trafficConditions.recommended_departure_time) {
+    html += `
+      <div style="margin-top: 0.75rem; font-size: 0.8125rem; color: #4a5568;">
+        <span style="font-weight: 600;">🕒 Recommended departure:</span> ${trafficConditions.recommended_departure_time}
+      </div>
+    `;
+  }
+
+  // Show which models were used
+  if (prediction.models_used && prediction.models_used.length > 0) {
+    html += `
+      <div style="margin-top: 0.5rem; font-size: 0.75rem; color: #718096;">
+        AI Models used: ${prediction.models_used.join(', ')}
+      </div>
+    `;
+  }
+
+  content.innerHTML = html;
+  aiSection.classList.add("visible");
+}
+
 // Handle form submission
 document.getElementById("routeForm").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -205,6 +326,21 @@ document.getElementById("routeForm").addEventListener("submit", async (e) => {
     carparkToggleBtn.classList.add("active");
     carparkOverlay.classList.add("visible");
     fetchCarparksNear(lastDestCoords[0], lastDestCoords[1], 1.0);
+
+    // ========== AI PREDICTION INTEGRATION ==========
+    // Get coordinates for AI prediction
+    const startCoords = Array.isArray(origin) ? origin : coords[0];
+    const destinationCoords = Array.isArray(dest) ? dest : coords[coords.length - 1];
+    
+    console.log("Calling AI prediction with coordinates:", {
+      start: startCoords,
+      destination: destinationCoords
+    });
+    
+    // Fetch AI predictions
+    const aiPrediction = await fetchAIPrediction(startCoords, destinationCoords);
+    displayAIPredictions(aiPrediction);
+
   } catch (err) {
     console.error(err);
     showError(err.message || "Network error occurred");

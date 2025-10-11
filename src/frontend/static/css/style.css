@@ -393,6 +393,31 @@ input[type="text"]::placeholder {
   margin-top: 0.25rem;
 }
 
+/* AI Predictions specific styles */
+.ai-prediction-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.ai-prediction-item:last-child {
+  border-bottom: none;
+}
+
+.ai-prediction-label {
+  font-size: 0.8125rem;
+  color: #4a5568;
+  font-weight: 500;
+}
+
+.ai-prediction-value {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #2d3748;
+}
+
 .map-container {
   position: relative;
   background: white;

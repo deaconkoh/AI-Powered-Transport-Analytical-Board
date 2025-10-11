@@ -1,7 +1,7 @@
 import os, sys
 from flask import Flask, render_template, request, jsonify
 from math import radians, sin, cos, asin, sqrt
-from src.backend.data.lta_client import client as lta_client 
+from src.backend.data.lta_client import client as lta_client
 
 # --- make src importable (backend lives under src/)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -12,6 +12,49 @@ if SRC_DIR not in sys.path:
 # --- app-specific imports
 from backend.data.weather_client import get_weather_data
 from backend.data.google_direction import route_google 
+
+# Import prediction modules with error handling
+try:
+    from backend.prediction.route_predictor import get_route_predictor
+    from backend.models.model_loader import get_model_loader
+    PREDICTION_AVAILABLE = True
+except ImportError as e:
+    print(f"Prediction module not available: {e}")
+    PREDICTION_AVAILABLE = False
+except Exception as e:
+    print(f"Error importing prediction module: {e}")
+    PREDICTION_AVAILABLE = False
+
+# Initialize models when server starts
+def initialize_models():
+    """Initialize AI models on server startup"""
+    if not PREDICTION_AVAILABLE:
+        print("Prediction modules not available - skipping model initialization")
+        return False
+        
+    try:
+        print("Initializing traffic prediction models...")
+        model_loader = get_model_loader()
+        models_loaded = model_loader.load_models()
+        
+        # Check how many models actually loaded
+        models_loaded_count = len(models_loaded) if models_loaded else 0
+        
+        if models_loaded_count > 0:
+            print(f"Model initialization completed! {models_loaded_count}/3 models loaded")
+            return True
+        else:
+            print("Model initialization failed - no models loaded")
+            return False
+            
+    except Exception as e:
+        print(f"Model initialization failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+# Call initialization when module loads
+models_initialized = initialize_models() if PREDICTION_AVAILABLE else False
 
 app = Flask(
     __name__,
@@ -47,7 +90,21 @@ def get_weather():
 # ---------- health ----------
 @app.get("/health")
 def health():
-    return jsonify(ok=True), 200
+    models_loaded_count = 0
+    if PREDICTION_AVAILABLE:
+        try:
+            model_loader = get_model_loader()
+            models_loaded_count = len(model_loader.models) if model_loader.loaded else 0
+        except:
+            models_loaded_count = 0
+    
+    return jsonify(
+        ok=True, 
+        models_loaded=models_initialized,
+        models_loaded_count=models_loaded_count,
+        prediction_available=PREDICTION_AVAILABLE,
+        message=f"{models_loaded_count}/3 AI models loaded successfully" if models_initialized else "AI models not available"
+    ), 200
 
 # ---------- routing (Google Directions) ----------
 @app.post("/route")
@@ -126,6 +183,35 @@ def route():
     
     return jsonify(result), 200
 
+# ---------- AI Prediction Route ----------
+@app.post("/predict_route")
+def predict_route():
+    """Get AI-powered route predictions"""
+    if not PREDICTION_AVAILABLE:
+        return jsonify(error="Prediction modules are not available"), 503
+        
+    if not models_initialized:
+        return jsonify(error="AI models are not loaded. Please check server logs."), 503
+        
+    body = request.get_json(force=True) or {}
+    origin = body.get("origin")
+    destination = body.get("destination")
+    
+    if not (isinstance(origin, list) and isinstance(destination, list) and len(origin) == 2 and len(destination) == 2):
+        return jsonify(error="origin/destination must be [lat, lon]"), 400
+    
+    try:
+        predictor = get_route_predictor()
+        prediction = predictor.predict_route_conditions(tuple(origin), tuple(destination))
+        
+        if "error" in prediction:
+            return jsonify(prediction), 500
+            
+        return jsonify(prediction), 200
+        
+    except Exception as e:
+        return jsonify(error=f"Prediction failed: {str(e)}"), 500
+
 def _haversine_km(lat1, lon1, lat2, lon2):
     R = 6371.0
     p1, p2 = radians(lat1), radians(lat2)
@@ -200,8 +286,10 @@ def carparks_nearby():
 
     return jsonify({"count": len(parsed), "carparks": parsed[:limit]})
 
-
 # ---------- run ----------
 if __name__ == "__main__":
+    print(f"Server starting...")
+    print(f"Models initialized: {models_initialized}")
+    print(f"Prediction available: {PREDICTION_AVAILABLE}")
     # port 8000 to match your earlier setup
     app.run(host="0.0.0.0", port=8000, debug=True)

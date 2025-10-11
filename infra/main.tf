@@ -88,6 +88,8 @@ dnf install -y python3 git nginx awscli
 python3 -m venv /opt/appenv
 source /opt/appenv/bin/activate
 pip install --upgrade pip gunicorn
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+pip install torch-geometric
 
 # fetch app code
 rm -rf /opt/app
