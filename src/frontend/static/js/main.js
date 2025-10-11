@@ -411,6 +411,98 @@ async function fetchCarparksNear(lat, lon, radiusKm = 1.0) {
   }
 }
 
+async function fetchAllCarparks(limit = 150) {
+  const carparkList = document.getElementById("carparkList");
+  const countEl = document.getElementById("carparkCount");
+
+  try {
+    carparkMarkers.forEach((m) => map.removeLayer(m));
+    carparkMarkers = [];
+    carparkList.innerHTML = `<div class="carpark-loading">🔎 Loading carparks across Singapore…</div>`;
+
+    // Optional timeout so UI never hangs
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 12000);
+
+    const resp = await fetch(`/carparks?limit=${limit}`, {
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+
+    const payload = await resp.json();
+    if (!resp.ok) throw new Error(payload.error || "Failed to load carparks");
+
+    const carparks = payload.carparks || [];
+    countEl.textContent = `${carparks.length} carparks across Singapore`;
+    carparkList.innerHTML = carparks.length
+      ? ""
+      : `<div class="carpark-loading">No carparks returned.</div>`;
+
+    carparks.forEach((cp) => {
+      const { Latitude, Longitude } = cp.Location;
+
+      const marker = L.marker([Latitude, Longitude], {
+        icon: L.divIcon({
+          html: "🅿️",
+          className: "emoji-icon",
+          iconSize: [30, 30],
+        }),
+      }).addTo(map);
+      marker.bindPopup(`
+        <b>${cp.Development || "Carpark"}</b><br>
+        Available: ${cp.AvailableLots ?? "—"}<br>
+        Type: ${cp.LotType === "C" ? "Car" : cp.LotType || "—"}<br>
+        Agency: ${cp.Agency || "—"}
+      `);
+      carparkMarkers.push(marker);
+
+      let badgeClass = "available";
+      let badgeText = `${cp.AvailableLots ?? "—"} lots`;
+      const lots = Number(cp.AvailableLots);
+      if (Number.isFinite(lots)) {
+        if (lots < 10) {
+          badgeClass = "full";
+          badgeText = "Almost Full";
+        } else if (lots < 30) {
+          badgeClass = "limited";
+        }
+      }
+
+      const item = document.createElement("div");
+      item.className = "carpark-item";
+      item.innerHTML = `
+        <div class="carpark-item-header">
+          <div class="carpark-name">${cp.Development || "Carpark"}</div>
+          <div class="carpark-availability"><div class="availability-badge ${badgeClass}">${badgeText}</div></div>
+        </div>
+        <div class="carpark-info">
+          <div class="carpark-info-item"><span>📍</span><span>${
+            cp.Area || "—"
+          }</span></div>
+          <div class="carpark-info-item"><span>🚗</span><span>${
+            cp.LotType === "C" ? "Car" : cp.LotType || "—"
+          }</span></div>
+          <div class="carpark-info-item"><span>🏢</span><span>${
+            cp.Agency || "—"
+          }</span></div>
+        </div>
+      `;
+      item.addEventListener("click", () => {
+        map.setView([Latitude, Longitude], 16);
+        marker.openPopup();
+      });
+      carparkList.appendChild(item);
+    });
+
+    // Optionally zoom map to show the overall island
+    // map.setView([1.3521, 103.8198], 12);
+  } catch (error) {
+    carparkList.innerHTML = `<div class="carpark-loading">❌ Unable to load carpark data. ${
+      error.message || ""
+    }</div>`;
+  }
+}
+
 carparkToggleBtn.addEventListener("click", () => {
   showingCarparks = !showingCarparks;
   carparkToggleBtn.classList.toggle("active");
@@ -418,8 +510,13 @@ carparkToggleBtn.addEventListener("click", () => {
 
   if (showingCarparks) {
     carparkToggleBtn.innerHTML = "<span>🅿️</span><span>Hide Carparks</span>";
-    if (carparkMarkers.length === 0 && Array.isArray(lastDestCoords)) {
-      fetchCarparksNear(lastDestCoords[0], lastDestCoords[1], 1.0);
+    if (carparkMarkers.length === 0) {
+      // If we have a destination, show near it; else show all
+      if (Array.isArray(lastDestCoords)) {
+        fetchCarparksNear(lastDestCoords[0], lastDestCoords[1], 1.0);
+      } else {
+        fetchAllCarparks(300);
+      }
     } else {
       carparkMarkers.forEach((m) => m.addTo(map));
     }

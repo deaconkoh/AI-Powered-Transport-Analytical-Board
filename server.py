@@ -138,33 +138,68 @@ def carparks_nearby():
     lat = request.args.get("lat", type=float)
     lon = request.args.get("lon", type=float)
     radius_km = request.args.get("radius_km", default=1.0, type=float)
-    if lat is None or lon is None:
-        return jsonify({"error": "lat and lon are required"}), 400
+    limit = request.args.get("limit", default=150, type=int)  # cap for UI
 
     c = lta_client()
-    rows = c.paged(c.carpark_availability, page_size=500, max_pages=20)  # uses your helper
 
-    nearby = []
+    # Page through DataMall (use your existing paging util)
+    rows, skip = [], 0
+    PAGE, MAXP = 500, 20
+    while True:
+        page = c.carpark_availability(skip=skip).get("value", [])
+        rows.extend(page)
+        if len(page) < PAGE or len(rows) >= PAGE * MAXP:
+            break
+        skip += len(page)
+
+    # Parse & normalize results
+    parsed = []
     for cp in rows:
         loc = (cp.get("Location") or "").strip()  # "lat lon"
         try:
             slat, slon = [float(x) for x in loc.split()]
         except Exception:
             continue
-        d = _haversine_km(lat, lon, slat, slon)
-        if d <= radius_km:
-            nearby.append({
-                "Development": cp.get("Development"),
-                "Location": {"Latitude": slat, "Longitude": slon},
-                "AvailableLots": cp.get("AvailableLots"),
-                "LotType": cp.get("LotType"),
-                "Agency": cp.get("Agency"),
-                "Area": cp.get("Area"),
-                "DistanceKm": round(d, 3),
-            })
+        parsed.append({
+            "Development": cp.get("Development"),
+            "Location": {"Latitude": slat, "Longitude": slon},
+            "AvailableLots": cp.get("AvailableLots"),
+            "LotType": cp.get("LotType"),
+            "Agency": cp.get("Agency"),
+            "Area": cp.get("Area"),
+        })
 
-    nearby.sort(key=lambda x: x["DistanceKm"])
-    return jsonify({"count": len(nearby), "carparks": nearby[:30]})
+    # Mode 1: coords provided → filter by radius
+    if lat is not None and lon is not None:
+        from math import radians, sin, cos, asin, sqrt
+        def haversine_km(a_lat, a_lon, b_lat, b_lon):
+            R = 6371.0
+            p1, p2 = radians(a_lat), radians(b_lat)
+            dphi, dlmb = radians(b_lat - a_lat), radians(b_lon - a_lon)
+            x = sin(dphi/2)**2 + cos(p1)*cos(p2)*sin(dlmb/2)**2
+            return 2 * R * asin(sqrt(x))
+
+        nearby = []
+        for cp in parsed:
+            d = haversine_km(lat, lon, cp["Location"]["Latitude"], cp["Location"]["Longitude"])
+            if d <= radius_km:
+                cp["DistanceKm"] = round(d, 3)
+                nearby.append(cp)
+
+        nearby.sort(key=lambda x: x["DistanceKm"])
+        return jsonify({"count": len(nearby), "carparks": nearby[:limit]})
+
+    # Mode 2: no coords → return all (sorted by AvailableLots desc, then name)
+    def lots_val(v):
+        try:
+            return int(v)
+        except Exception:
+            return -1
+
+    parsed.sort(key=lambda x: (-lots_val(x["AvailableLots"]), x["Development"] or ""))
+
+    return jsonify({"count": len(parsed), "carparks": parsed[:limit]})
+
 
 # ---------- run ----------
 if __name__ == "__main__":
