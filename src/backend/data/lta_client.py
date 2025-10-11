@@ -155,6 +155,10 @@ class LTAClient:
         """Approved road works (planned/ongoing). Endpoint: /RoadWorks"""
         return self._request("RoadWorks")
 
+    def carpark_availability(self, skip: int = 0):
+        params = {"$skip": skip} if skip else None
+        return self._request("CarParkAvailabilityv2", params=params)
+
 
     # ---------- helpers ----------
 

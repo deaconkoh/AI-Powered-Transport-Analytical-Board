@@ -1,5 +1,7 @@
 import os, sys
 from flask import Flask, render_template, request, jsonify
+from math import radians, sin, cos, asin, sqrt
+from src.backend.data.lta_client import client as lta_client 
 
 # --- make src importable (backend lives under src/)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -24,9 +26,23 @@ def home():
 
 @app.route("/get_weather", methods=["GET"])
 def get_weather():
-    city = request.form.get("city", "Punggol Coast")
-    data = get_weather_data()  # (plug city into your logic later)
-    return jsonify(data)
+    # Accept either ?city=... or ?lat=...&lon=...
+    city = request.args.get("city")
+    lat = request.args.get("lat", type=float)
+    lon = request.args.get("lon", type=float)
+
+    data = get_weather_data(city=city, lat=lat, lon=lon)
+
+    safe = {
+        "forecast": data.get("forecast") or "Fair",
+        "temperature": data.get("temperature") if data.get("temperature") is not None else 30,
+        "humidity": data.get("humidity") if data.get("humidity") is not None else 75,
+        "wind_speed": data.get("wind_speed") if data.get("wind_speed") is not None else 15,
+        "feels_like": data.get("feels_like") if data.get("feels_like") is not None else 32,
+        # helpful for the UI label
+        "resolved_area": data.get("resolved_area") or (city or "Singapore"),
+    }
+    return jsonify(safe)
 
 # ---------- health ----------
 @app.get("/health")
@@ -109,6 +125,46 @@ def route():
         return jsonify(error=msg), code
     
     return jsonify(result), 200
+
+def _haversine_km(lat1, lon1, lat2, lon2):
+    R = 6371.0
+    p1, p2 = radians(lat1), radians(lat2)
+    dphi, dlmb = radians(lat2 - lat1), radians(lon2 - lon1)
+    a = sin(dphi/2)**2 + cos(p1)*cos(p2)*sin(dlmb/2)**2
+    return 2 * R * asin(sqrt(a))
+
+@app.get("/carparks")
+def carparks_nearby():
+    lat = request.args.get("lat", type=float)
+    lon = request.args.get("lon", type=float)
+    radius_km = request.args.get("radius_km", default=1.0, type=float)
+    if lat is None or lon is None:
+        return jsonify({"error": "lat and lon are required"}), 400
+
+    c = lta_client()
+    rows = c.paged(c.carpark_availability, page_size=500, max_pages=20)  # uses your helper
+
+    nearby = []
+    for cp in rows:
+        loc = (cp.get("Location") or "").strip()  # "lat lon"
+        try:
+            slat, slon = [float(x) for x in loc.split()]
+        except Exception:
+            continue
+        d = _haversine_km(lat, lon, slat, slon)
+        if d <= radius_km:
+            nearby.append({
+                "Development": cp.get("Development"),
+                "Location": {"Latitude": slat, "Longitude": slon},
+                "AvailableLots": cp.get("AvailableLots"),
+                "LotType": cp.get("LotType"),
+                "Agency": cp.get("Agency"),
+                "Area": cp.get("Area"),
+                "DistanceKm": round(d, 3),
+            })
+
+    nearby.sort(key=lambda x: x["DistanceKm"])
+    return jsonify({"count": len(nearby), "carparks": nearby[:30]})
 
 # ---------- run ----------
 if __name__ == "__main__":
