@@ -16,3 +16,10 @@ build/
 .idea/
 *.log
 .venv
+# Terraform
+*.tfstate
+*.tfstate.backup
+.terraform/
+terraform.tfvars
+secrets.auto.tfvars
+
