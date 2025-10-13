@@ -1,6 +1,27 @@
-import os, sys
+import os, sys, boto3, json, gzip, io
 from math import radians, sin, cos, asin, sqrt
 from flask import Flask, render_template, request, jsonify
+from botocore.exceptions import ClientError
+
+USE_SM = os.getenv("USE_SM", "false").lower() == "true"
+SM_ENDPOINT = os.getenv("SM_ENDPOINT", "")
+sm_rt = boto3.client("sagemaker-runtime") if USE_SM else None
+RAW_BUCKET = os.getenv("RAW_BUCKET")  # e.g. traffic-ai-raw-<acct>-us-east-1
+CARPARK_PREFIX = "raw/lta/carparks/"
+
+def _s3_client():
+    return boto3.client("s3", region_name="us-east-1")  # your region
+
+def _get_latest_key_for_prefix(s3, bucket, prefix):
+    resp = s3.list_objects_v2(Bucket=bucket, Prefix=prefix)
+    objs = resp.get("Contents", [])
+    if not objs: return None
+    latest = max(objs, key=lambda o: o["LastModified"])
+    return latest["Key"]
+
+def _load_json_from_s3(s3, bucket, key):
+    obj = s3.get_object(Bucket=bucket, Key=key)
+    return json.loads(obj["Body"].read())
 
 # --- make src importable (backend lives under src/)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -38,7 +59,7 @@ def initialize_models():
         import traceback; traceback.print_exc()
         return False
 
-models_initialized = initialize_models() if PREDICTION_AVAILABLE else False
+models_initialized = False if USE_SM else (initialize_models() if PREDICTION_AVAILABLE else False)
 
 app = Flask(
     __name__,
@@ -149,17 +170,35 @@ def route():
 # ---------- AI Prediction Route ----------
 @app.post("/predict_route")
 def predict_route():
-    if not PREDICTION_AVAILABLE:
-        return jsonify(error="Prediction modules are not available"), 503
-    if not models_initialized:
-        return jsonify(error="AI models are not loaded. Please check server logs."), 503
-
     body = request.get_json(force=True) or {}
     origin = body.get("origin")
     destination = body.get("destination")
 
-    if not (isinstance(origin, list) and isinstance(destination, list) and len(origin) == 2 and len(destination) == 2):
+    # Validate inputs (keeps same shape as your original)
+    if not (isinstance(origin, list) and isinstance(destination, list)
+            and len(origin) == 2 and len(destination) == 2):
         return jsonify(error="origin/destination must be [lat, lon]"), 400
+
+    # ---- SageMaker path ----
+    if USE_SM:
+        try:
+            resp = sm_rt.invoke_endpoint(
+                EndpointName=SM_ENDPOINT,
+                ContentType="application/json",
+                Body=json.dumps(body).encode("utf-8"),
+            )
+            payload = resp["Body"].read()
+            data = json.loads(payload)
+            # Add a marker so you can prove it's SageMaker:
+            return jsonify(data), 200
+        except Exception as e:
+            return jsonify(error=f"SageMaker invoke failed: {e}"), 502
+
+    # ---- Local path (only if not using SM) ----
+    if not PREDICTION_AVAILABLE:
+        return jsonify(error="Prediction modules are not available"), 503
+    if not models_initialized:
+        return jsonify(error="AI models are not loaded. Please check server logs."), 503
 
     try:
         predictor = get_route_predictor()
@@ -184,17 +223,34 @@ def carparks_nearby():
     radius_km = request.args.get("radius_km", default=1.0, type=float)
     limit = request.args.get("limit", default=150, type=int)
 
-    c = lta_client()
+    rows = None
 
-    rows, skip = [], 0
-    PAGE, MAXP = 500, 20
-    while True:
-        page = c.carpark_availability(skip=skip).get("value", [])
-        rows.extend(page)
-        if len(page) < PAGE or len(rows) >= PAGE * MAXP:
-            break
-        skip += len(page)
+    # 1) Try S3 snapshot first (preferred)
+    if RAW_BUCKET:
+        try:
+            s3 = _s3_client()
+            key = _get_latest_key_for_prefix(s3, RAW_BUCKET, CARPARK_PREFIX)
+            if key:
+                snap = _load_json_from_s3(s3, RAW_BUCKET, key)
+                # Expect same structure your LTA client returns: {"value": [...]}
+                rows = (snap.get("value") or snap.get("data", {}).get("value") or [])
+        except ClientError as e:
+            # fall back silently
+            print(f"[carparks] S3 read failed: {e}")
 
+    # 2) Fallback to live LTA if S3 not available
+    if rows is None:
+        c = lta_client()
+        rows, skip = [], 0
+        PAGE, MAXP = 500, 20
+        while True:
+            page = c.carpark_availability(skip=skip).get("value", [])
+            rows.extend(page)
+            if len(page) < PAGE or len(rows) >= PAGE * MAXP:
+                break
+            skip += len(page)
+
+    # Parse into your stable shape
     parsed = []
     for cp in rows:
         loc = (cp.get("Location") or "").strip()  # "lat lon"
