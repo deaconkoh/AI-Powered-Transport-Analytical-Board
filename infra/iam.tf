@@ -14,6 +14,39 @@ resource "aws_iam_role" "ec2_role" {
   })
 }
 
+resource "aws_iam_role_policy_attachment" "raw_s3_read_attach" {
+  role       = aws_iam_role.ec2_role.name
+  policy_arn = aws_iam_policy.raw_s3_read.arn
+}
+
+resource "aws_iam_policy" "raw_s3_read" {
+  name = "${var.project_name}-raw-s3-read"
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect   = "Allow",
+        Action   = ["s3:ListBucket"],
+        Resource = "arn:aws:s3:::${aws_s3_bucket.raw.bucket}",
+        Condition = {
+          StringLike = {
+            "s3:prefix" : [
+              "raw/lta/carparks/*",
+              "raw/lta/carparks/"
+            ]
+          }
+        }
+      },
+      {
+        Effect   = "Allow",
+        Action   = ["s3:GetObject"],
+        Resource = "arn:aws:s3:::${aws_s3_bucket.raw.bucket}/raw/lta/carparks/*"
+      }
+    ]
+  })
+}
+
 # ECR pull
 resource "aws_iam_role_policy_attachment" "ecr_readonly" {
   role       = aws_iam_role.ec2_role.name

@@ -3,8 +3,8 @@ Traffic prediction using ensemble of models
 """
 import torch
 import numpy as np
-from typing import Dict, List, Tuple, Optional
-from .model_loader import get_model_loader
+from typing import Dict, List, Tuple, Optional, Any
+from model_loader import get_model_loader
 
 class TrafficPredictor:
     def __init__(self):
@@ -322,6 +322,21 @@ class TrafficPredictor:
             confidence = max(0.1, 1.0 - variance)
             return float(confidence)
         return 0.5  # Default confidence
+    
+    def predict_route_conditions(self, origin: Tuple[float, float], destination: Tuple[float, float]) -> Dict[str, Any]:
+        """
+        Route-aware prediction entrypoint used by the SageMaker container.
+        For now this reuses the existing traffic/weather inference path so the endpoint works.
+        Later, replace the stub with real routing -> per-edge features.
+        """
+        # TODO: convert origin/destination to route edges + features
+        base = self.predict_traffic_conditions({}, {})
+        return {
+            "route_summary": {"origin": origin, "destination": destination},
+            "predictions": base.get("predictions", base),
+            "confidence": base.get("confidence", 0.5),
+            "timestamp": base.get("timestamp"),
+        }
 
 # Global instance
 _predictor = None

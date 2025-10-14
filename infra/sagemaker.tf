@@ -73,6 +73,26 @@ resource "aws_iam_role_policy_attachment" "sm_s3_read_attach" {
   policy_arn = aws_iam_policy.sm_s3_read.arn
 }
 
+resource "aws_iam_policy" "sm_secrets_read" {
+  name = "${var.project_name}-sm-secrets-read"
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect   = "Allow",
+        Action   = ["secretsmanager:GetSecretValue"],
+        Resource = "arn:aws:secretsmanager:${var.region}:${data.aws_caller_identity.current.account_id}:secret:traffic-ai-app-secrets-*"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "sm_secrets_read_attach" {
+  role       = aws_iam_role.sm_exec.name
+  policy_arn = aws_iam_policy.sm_secrets_read.arn
+}
+
+
 resource "aws_iam_role_policy_attachment" "sm_full" {
   role       = aws_iam_role.sm_exec.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSageMakerFullAccess"
@@ -93,6 +113,9 @@ resource "aws_sagemaker_model" "ensemble" {
       SAGEMAKER_PROGRAM          = "inference.py"
       SAGEMAKER_SUBMIT_DIRECTORY = "/opt/ml/model/code"
       USE_LIVE_APIS              = "false" # model won’t call LTA/NEA
+      AWS_DEFAULT_REGION         = "us-east-1"
+      AWS_REGION                 = "us-east-1"
+      APP_SECRET_NAME            = "traffic-ai-app-secrets"
     }
   }
 

@@ -9,6 +9,22 @@ sm_rt = boto3.client("sagemaker-runtime") if USE_SM else None
 RAW_BUCKET = os.getenv("RAW_BUCKET")  # e.g. traffic-ai-raw-<acct>-us-east-1
 CARPARK_PREFIX = "raw/lta/carparks/"
 
+# Normalise key names before loading
+if os.getenv("GOOGLE_MAPS_API_KEY") and not os.getenv("GOOGLE_MAP_KEY"):
+    os.environ["GOOGLE_MAP_KEY"] = os.getenv("GOOGLE_MAPS_API_KEY")
+
+if not os.getenv("GOOGLE_MAP_KEY"):
+    try:
+        region = os.getenv("AWS_REGION", "us-east-1")
+        google_secret_id = os.getenv("GOOGLE_MAPS_SECRET_ID", "traffic-ai/google-map-key")
+        sm = boto3.client("secretsmanager", region_name=region)
+        blob = sm.get_secret_value(SecretId=google_secret_id)["SecretString"]
+        os.environ["GOOGLE_MAP_KEY"] = json.loads(blob).get("key", "")
+    except Exception as e:
+        print(f"[startup] Could not load Google Maps key: {e}")
+
+
+
 def _s3_client():
     return boto3.client("s3", region_name="us-east-1")  # your region
 

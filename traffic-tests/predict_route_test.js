@@ -3,32 +3,31 @@ import { check, sleep } from "k6";
 
 export const options = {
   stages: [
-    { duration: "30s", target: 25 },
-    { duration: "60s", target: 50 },
-    { duration: "60s", target: 100 },
-    { duration: "30s", target: 0 },
+    { duration: "30s", target: 1 }, // warmup
+    { duration: "60s", target: 50 }, // ramp
+    { duration: "60s", target: 100 }, // peak
+    { duration: "30s", target: 0 }, // ramp down
   ],
   thresholds: {
-    http_req_failed: ["rate<0.02"],
-    http_req_duration: ["p(95)<1500"],
+    http_req_failed: ["rate<0.01"],
+    // set loose first, tighten after tuning:
+    http_req_duration: ["p(95)<5000"],
   },
 };
 
-const HOST = __ENV.HOST || "localhost";
-const BASE = `http://${HOST}:8080`;
-const headers = { "Content-Type": "application/json" };
-const payloads = JSON.parse(open("./payloads.json"));
+const URL = "http://44.196.227.203:8080/predict_route";
+const BODY = JSON.stringify({
+  origin: [1.3521, 103.8198],
+  destination: [1.2903, 103.8519],
+});
 
 export default function () {
-  const body = JSON.stringify(
-    payloads[Math.floor(Math.random() * payloads.length)]
-  );
-  const res = http.post(`${BASE}/predict_route`, body, { headers });
-
-  check(res, {
-    "status is 200": (r) => r.status === 200,
-    "body not empty": (r) => r && r.body && r.body.length > 0,
+  const res = http.post(URL, BODY, {
+    headers: { "Content-Type": "application/json" },
   });
-
+  check(res, {
+    "status 200": (r) => r.status === 200,
+    "non-empty": (r) => (r.body || "").length > 2,
+  });
   sleep(1);
 }

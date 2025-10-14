@@ -59,3 +59,33 @@ variable "raw_bucket_name" {
   type        = string
   description = "S3 bucket that holds raw ingestion (e.g., raw/lta/CarParkAvailability)"
 }
+
+variable "enable_ingestion" {
+  type        = bool
+  default     = true
+  description = "Attach EventBridge targets to Lambda (on/off)."
+}
+
+variable "vpc_id" {
+  type = string
+}
+
+variable "public_subnet_ids" {
+  type = list(string)
+} # ALB here
+
+variable "private_subnet_ids" {
+  type = list(string)
+}
+
+variable "alb_cert_arn" {
+  type        = string
+  default     = ""
+  description = "ACM cert ARN for HTTPS. Leave blank to disable HTTPS."
+}
+
+
+variable "enable_single_ec2" {
+  type    = bool
+  default = false
+}

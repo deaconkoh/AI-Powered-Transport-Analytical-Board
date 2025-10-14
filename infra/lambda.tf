@@ -147,12 +147,14 @@ resource "aws_cloudwatch_event_rule" "lta_rule" {
 }
 
 resource "aws_cloudwatch_event_target" "lta_target" {
+  count     = var.enable_ingestion ? 1 : 0
   rule      = aws_cloudwatch_event_rule.lta_rule.name
   target_id = "lta-lambda"
   arn       = aws_lambda_function.lta_ingest.arn
 }
 
 resource "aws_lambda_permission" "lta_invoke" {
+  count         = var.enable_ingestion ? 1 : 0
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.lta_ingest.function_name
   principal     = "events.amazonaws.com"
@@ -166,12 +168,14 @@ resource "aws_cloudwatch_event_rule" "nea_rule" {
 }
 
 resource "aws_cloudwatch_event_target" "nea_target" {
+  count     = var.enable_ingestion ? 1 : 0
   rule      = aws_cloudwatch_event_rule.nea_rule.name
   target_id = "nea-lambda"
   arn       = aws_lambda_function.nea_ingest.arn
 }
 
 resource "aws_lambda_permission" "nea_invoke" {
+  count         = var.enable_ingestion ? 1 : 0
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.nea_ingest.function_name
   principal     = "events.amazonaws.com"
