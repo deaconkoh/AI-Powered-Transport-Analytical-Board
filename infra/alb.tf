@@ -7,11 +7,12 @@ resource "aws_lb_target_group" "api_tg" {
 
   health_check {
     path                = "/healthz"
-    matcher             = "200-299"
-    interval            = 15
-    timeout             = 5
-    healthy_threshold   = 3
-    unhealthy_threshold = 3
+    matcher             = "200"
+    port                = "traffic-port"
+    interval            = 20
+    timeout             = 10
+    healthy_threshold   = 2
+    unhealthy_threshold = 5
   }
 }
 
@@ -20,8 +21,13 @@ resource "aws_lb" "api_alb" {
   internal           = false
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb_sg.id]
-  subnets            = var.public_subnet_ids
+  subnets            = [data.aws_subnet.public_a.id, data.aws_subnet.public_b.id]
   idle_timeout       = 60
+
+  access_logs {
+    bucket  = aws_s3_bucket.alb_logs.bucket
+    enabled = true
+  }
 }
 
 resource "aws_lb_listener" "http_80" {

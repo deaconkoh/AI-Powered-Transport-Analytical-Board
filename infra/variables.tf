@@ -70,22 +70,42 @@ variable "vpc_id" {
   type = string
 }
 
-variable "public_subnet_ids" {
-  type = list(string)
-} # ALB here
-
-variable "private_subnet_ids" {
-  type = list(string)
-}
-
 variable "alb_cert_arn" {
   type        = string
   default     = ""
   description = "ACM cert ARN for HTTPS. Leave blank to disable HTTPS."
 }
 
-
 variable "enable_single_ec2" {
   type    = bool
   default = false
+}
+
+variable "asg_min_size" {
+  type    = number
+  default = 1
+}
+variable "asg_max_size" {
+  type    = number
+  default = 5
+}
+variable "asg_desired_capacity" {
+  type    = number
+  default = 1
+}
+
+output "waf_log_group_name" {
+  value       = aws_cloudwatch_log_group.waf_logs.name
+  description = "CloudWatch Logs group receiving WAF logs"
+}
+
+variable "public_subnet_ids" {
+  description = "Existing public subnet IDs in the target VPC (2 AZs)"
+  type        = list(string)
+}
+
+variable "enable_private_networking" {
+  type        = bool
+  description = "Create private subnets, NAT, and VPC endpoints"
+  default     = false
 }

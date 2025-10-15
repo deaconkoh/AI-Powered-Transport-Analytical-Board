@@ -6,6 +6,16 @@ resource "aws_launch_template" "api_lt" {
 
   # you already have an instance profile in iam.tf
   iam_instance_profile { name = aws_iam_instance_profile.ec2_profile.name }
+  block_device_mappings {
+    device_name = "/dev/xvda"
+    ebs {
+      volume_size           = 30
+      volume_type           = "gp3"
+      iops                  = 3000
+      throughput            = 125
+      delete_on_termination = true
+    }
+  }
 
   user_data = base64encode(<<-EOF
     #!/bin/bash
@@ -18,6 +28,9 @@ resource "aws_launch_template" "api_lt" {
     REGION="${var.region}"
     REPO_URL="${aws_ecr_repository.app.repository_url}"
     IMAGE_TAG="${var.image_tag}"
+
+    # Version bump to trigger LT update
+    docker system prune -af || true
 
     aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin "$REPO_URL"
     docker pull "$REPO_URL:$IMAGE_TAG" || true
@@ -42,10 +55,10 @@ resource "aws_launch_template" "api_lt" {
 
 resource "aws_autoscaling_group" "api_asg" {
   name                      = "${var.project_name}-asg"
-  max_size                  = 1
-  min_size                  = 1
-  desired_capacity          = 1
-  vpc_zone_identifier       = var.public_subnet_ids
+  max_size                  = var.asg_max_size
+  min_size                  = var.asg_min_size
+  desired_capacity          = var.asg_desired_capacity
+  vpc_zone_identifier       = [aws_subnet.private_a.id, aws_subnet.private_b.id]
   health_check_type         = "ELB"
   health_check_grace_period = 180
 
@@ -70,4 +83,20 @@ resource "aws_autoscaling_group" "api_asg" {
     value               = "${var.project_name}-api"
     propagate_at_launch = true
   }
+}
+
+# CPU target tracking (scale out/in slowly)
+resource "aws_autoscaling_policy" "cpu_tgt" {
+  name                   = "${var.project_name}-cpu-tt"
+  autoscaling_group_name = aws_autoscaling_group.api_asg.name
+  policy_type            = "TargetTrackingScaling"
+
+  target_tracking_configuration {
+    predefined_metric_specification {
+      predefined_metric_type = "ASGAverageCPUUtilization"
+    }
+    target_value = 70 # scale out above ~70% avg CPU
+  }
+
+  estimated_instance_warmup = 300
 }
