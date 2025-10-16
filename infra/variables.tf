@@ -83,15 +83,15 @@ variable "enable_single_ec2" {
 
 variable "asg_min_size" {
   type    = number
-  default = 1
+  default = 2
 }
 variable "asg_max_size" {
   type    = number
-  default = 5
+  default = 6
 }
 variable "asg_desired_capacity" {
   type    = number
-  default = 1
+  default = 2
 }
 
 output "waf_log_group_name" {
