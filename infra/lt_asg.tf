@@ -60,7 +60,7 @@ resource "aws_autoscaling_group" "api_asg" {
   desired_capacity          = var.asg_desired_capacity
   vpc_zone_identifier       = [aws_subnet.private_a.id, aws_subnet.private_b.id]
   health_check_type         = "ELB"
-  health_check_grace_period = 180
+  health_check_grace_period = 300
 
   launch_template {
     id      = aws_launch_template.api_lt.id

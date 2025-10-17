@@ -10,7 +10,7 @@ variable "region" {
 
 variable "image_tag" {
   type    = string
-  default = "latest"
+  default = "v20251017-1508"
 }
 
 variable "ec2_role_name" {
