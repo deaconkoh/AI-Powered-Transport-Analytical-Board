@@ -4,12 +4,12 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Traffic-AI: Navigation Router</title>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
     <link
+      href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css"
       rel="stylesheet"
-      href="https://unpkg.com/leaflet-draw/dist/leaflet.draw.css"
     />
-    <link rel="stylesheet" href="../static/css/style.css" />
+    <link rel="stylesheet" href="../static/css/styleTEMP.css" />
+    <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
   </head>
   <body>
     <div class="container">
@@ -22,6 +22,18 @@
           <div class="tagline">Find the best route for your journey</div>
         </div>
 
+        <!-- MODE SWITCHER -->
+        <div class="mode-switcher">
+          <button class="mode-btn" id="forecastBtn">
+            <span>🌡️</span>
+            <span>Forecast</span>
+          </button>
+          <button class="mode-btn" id="carparkBtn">
+            <span>🅿️</span>
+            <span>Carparks</span>
+          </button>
+        </div>
+
         <!-- WEATHER WIDGET -->
         <div class="weather-widget" id="weatherWidget">
           <div class="weather-loading">
@@ -29,6 +41,7 @@
           </div>
         </div>
 
+        <!-- FORM CONTENT (Always visible) -->
         <form id="routeForm">
           <div class="form-group">
             <label class="form-label">Starting Point</label>
@@ -100,6 +113,15 @@
             <span>🚗</span>
             Calculate Route
           </button>
+          <button
+            type="button"
+            class="google-maps-btn"
+            id="googleMapsBtn"
+            style="display: none"
+          >
+            <span>🗺️</span>
+            Open in Google Maps
+          </button>
 
           <div class="error-message" id="errorMessage"></div>
 
@@ -118,20 +140,54 @@
           </div>
         </form>
       </div>
-      <!-- Place near the map or under the form -->
-      <div id="emptyState" class="empty-state">
-        <div>Enter a start and destination to see your route here.</div>
-      </div>
-
-      <div class="map-container">
-        <!-- Carpark Toggle Button -->
-        <button class="carpark-toggle-btn" id="carparkToggleBtn">
-          <span>🅿️</span>
-          <span>Show Carparks</span>
-        </button>
-
-        <!-- Map View -->
+      <div class="map-container" id="mapContainer">
+        <!-- Single Map View -->
         <div id="map"></div>
+
+        <!-- Forecast Time Slider Controls -->
+        <div class="forecast-controls" id="forecastControls">
+          <div class="forecast-header">
+            <div class="forecast-title">
+              <span>🌡️</span>
+              <span>24-Hour Traffic Forecast</span>
+            </div>
+          </div>
+
+          <div class="forecast-time-display">
+            <div class="forecast-time" id="forecastTime">12:00 PM</div>
+            <div class="forecast-offset" id="forecastOffset">Now</div>
+          </div>
+
+          <div class="slider-container">
+            <input
+              type="range"
+              min="0"
+              max="24"
+              value="0"
+              step="1"
+              class="time-slider"
+              id="forecastSlider"
+            />
+            <div class="slider-markers">
+              <span>Now</span>
+              <span>+6h</span>
+              <span>+12h</span>
+              <span>+18h</span>
+              <span>+24h</span>
+            </div>
+          </div>
+
+          <div class="forecast-legend">
+            <div class="gradient-legend">
+              <div class="gradient-bar"></div>
+              <div class="gradient-labels">
+                <span>Low</span>
+                <span>Medium</span>
+                <span>Heavy</span>
+              </div>
+            </div>
+          </div>
+        </div>
 
         <!-- Carpark Overlay -->
         <div class="carpark-overlay" id="carparkOverlay">
@@ -150,9 +206,8 @@
       </div>
     </div>
 
-    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-    <script src="https://unpkg.com/leaflet-draw/dist/leaflet.draw.js"></script>
     <script src="https://unpkg.com/@mapbox/polyline"></script>
-    <script src="../static/js/main.js"></script>
+    <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+    <script src="../static/js/mainTEMP.js"></script>
   </body>
 </html>

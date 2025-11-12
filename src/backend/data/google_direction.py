@@ -14,7 +14,7 @@ def geocode_address(
     Convert an address string to (lat, lng) coordinates using Google Geocoding API.
     Returns: ((lat, lng), None) on success, or (None, error_message) on failure
     """
-    key = api_key or os.getenv("GOOGLE_MAPS_API_KEY")
+    key = api_key or os.getenv("GOOGLE_MAP_KEY")
     if not key:
         return None, "GOOGLE_MAP_KEY env not set"
     
@@ -56,7 +56,7 @@ def route_google(
     session: Optional[requests.Session] = None,
     timeout: float = 15.0,
 ):
-    key = api_key or os.getenv("GOOGLE_MAPS_API_KEY")
+    key = api_key or os.getenv("GOOGLE_MAP_KEY")
     if not key:
         return None, ("GOOGLE_MAP_KEY env not set", 500)
 

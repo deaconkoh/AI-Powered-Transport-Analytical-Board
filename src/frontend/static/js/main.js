@@ -1,32 +1,46 @@
-// Init map
-const map = L.map("map").setView([1.3521, 103.8198], 12);
-L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-  attribution: "© OpenStreetMap contributors",
-}).addTo(map);
-
-// Draw controls (polygon)
-const drawnItems = new L.FeatureGroup();
-map.addLayer(drawnItems);
-map.addControl(
-  new L.Control.Draw({
-    draw: {
-      polygon: true,
-      polyline: false,
-      rectangle: false,
-      circle: false,
-      marker: false,
-      circlemarker: false,
+// ================= MAP INIT =================
+const map = new maplibregl.Map({
+  container: "map",
+  style: {
+    version: 8,
+    sources: {
+      osm: {
+        type: "raster",
+        tiles: ["https://a.tile.openstreetmap.org/{z}/{x}/{y}.png"],
+        tileSize: 256,
+      },
     },
-    edit: { featureGroup: drawnItems },
-  })
-);
-map.on(L.Draw.Event.CREATED, (e) => drawnItems.addLayer(e.layer));
+    layers: [
+      { id: "osm", type: "raster", source: "osm", minzoom: 0, maxzoom: 19 },
+    ],
+  },
+  center: [103.8198, 1.3521],
+  zoom: 11,
+});
+map.addControl(new maplibregl.NavigationControl(), "top-right");
 
-let currentRouteLayer = null;
+// ================ STATE =====================
 let originMarker = null;
 let destMarker = null;
+let carparkMarkers = [];
+let showingCarparks = false;
+let showingForecast = false;
+let lastDestCoords = null;
+let currentForecastHour = 0;
 
-// DOM elements
+let roadsData = null; // mutable copy
+let roadsDataOriginal = null; // pristine copy to reset
+let activeCarparkPopup = null;
+let boundCloseOnMapClick = false;
+
+// ================= DOM HOOKS ================
+const forecastBtn = document.getElementById("forecastBtn");
+const carparkBtn = document.getElementById("carparkBtn");
+const forecastControls = document.getElementById("forecastControls");
+const forecastSlider = document.getElementById("forecastSlider");
+const forecastTime = document.getElementById("forecastTime");
+const forecastOffset = document.getElementById("forecastOffset");
+
 const tollToggle = document.getElementById("tollToggle");
 const tollCard = document.getElementById("tollCard");
 const highwayToggle = document.getElementById("highwayToggle");
@@ -36,205 +50,359 @@ const fastestCard = document.getElementById("fastestCard");
 const calculateBtn = document.getElementById("calculateBtn");
 const errorMessage = document.getElementById("errorMessage");
 const routeInfo = document.getElementById("routeInfo");
-const emptyState = document.getElementById("emptyState");
+const carparkOverlay = document.getElementById("carparkOverlay");
 
-// Toggle switches with card click support
+// ================= LOAD BASE ROAD NETWORK =================
+const neutralRoadColorExpr = [
+  "match",
+  ["get", "RD_CATG__1"],
+  "Category 1",
+  "#ff6b6b",
+  "Category 2",
+  "#ff8e4d",
+  "Category 3",
+  "#ffd166",
+  "Category 4",
+  "#7bd389",
+  "Category 5",
+  "#4db6ac",
+  "Category 6",
+  "#64b5f6",
+  "Category 7",
+  "#ba68c8",
+  "Category 8",
+  "#9575cd",
+  /* default */ "#aaaaaa",
+];
+
+// Forecast gradient (match the card): green → yellow → orange → red
+// NOTE: LTA band: 8 fast (low congestion, green) ... 1 slow (heavy, red)
+const forecastColorExpr = [
+  "interpolate",
+  ["linear"],
+  ["to-number", ["coalesce", ["get", "band"], 8]],
+  1,
+  "#ef4444", // red (heavy)
+  3,
+  "#f97316", // orange
+  5,
+  "#eab308", // yellow
+  8,
+  "#22c55e", // green (low)
+];
+
+// Thicker for worse congestion (band 1 thick → band 8 thin)
+const forecastWidthExpr = [
+  "interpolate",
+  ["linear"],
+  ["to-number", ["coalesce", ["get", "band"], 8]],
+  1,
+  4.8,
+  8,
+  1.6,
+];
+
+map.on("load", async () => {
+  try {
+    const res = await fetch("../static/js/roads_wgs84.geojson"); // put file next to this JS
+    if (!res.ok) throw new Error("Failed to load road network GeoJSON");
+    const roads = await res.json();
+
+    // keep copies so we can mutate/reset
+    roadsDataOriginal = roads;
+    roadsData = JSON.parse(JSON.stringify(roads));
+
+    map.addSource("roads", {
+      type: "geojson",
+      data: roadsData,
+      lineMetrics: true,
+    });
+
+    // casing
+    map.addLayer({
+      id: "roads-case",
+      type: "line",
+      source: "roads",
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: {
+        "line-color": "#ffffff",
+        "line-opacity": 0.55,
+        "line-width": ["interpolate", ["linear"], ["zoom"], 10, 1.6, 14, 3.2],
+      },
+    });
+
+    // base (neutral) view by category
+    map.addLayer({
+      id: "roads-line",
+      type: "line",
+      source: "roads",
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: {
+        "line-color": neutralRoadColorExpr,
+        "line-opacity": 0.95,
+        "line-width": ["interpolate", ["linear"], ["zoom"], 10, 1.2, 14, 2.4],
+      },
+    });
+
+    // Fit to roads if turf available
+    try {
+      if (typeof turf !== "undefined") {
+        const bbox = turf.bbox(roadsData);
+        map.fitBounds(bbox, { padding: 40, duration: 0 });
+      }
+    } catch (e) {
+      console.warn("turf bbox failed, skipping auto-fit:", e);
+    }
+  } catch (err) {
+    console.error("Failed to load roads layer:", err);
+  }
+});
+
+// ============ SMALL UTILITIES ===============
+function parseLatLng(str) {
+  const parts = (str || "")
+    .trim()
+    .split(",")
+    .map((s) => s.trim());
+  if (parts.length !== 2) return null;
+  const lat = parseFloat(parts[0]),
+    lng = parseFloat(parts[1]);
+  return Number.isFinite(lat) &&
+    Number.isFinite(lng) &&
+    lat >= -90 &&
+    lat <= 90 &&
+    lng >= -180 &&
+    lng <= 180
+    ? [lat, lng]
+    : null;
+}
+function showError(message) {
+  errorMessage.textContent = message;
+  errorMessage.classList.add("visible");
+  setTimeout(() => errorMessage.classList.remove("visible"), 5000);
+}
+function formatDuration(seconds) {
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60),
+    mins = minutes % 60;
+  return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+}
+function addPin(lngLat, htmlLabel) {
+  const el = document.createElement("div");
+  el.className = "emoji-marker";
+  el.textContent = "📍";
+  el.style.fontSize = "34px";
+  el.style.lineHeight = "1";
+  el.style.filter = "drop-shadow(0 1px 1px rgba(0,0,0,.35))";
+  return new maplibregl.Marker({
+    element: el,
+    anchor: "bottom",
+    offset: [0, 6],
+  })
+    .setLngLat(lngLat)
+    .setPopup(new maplibregl.Popup({ offset: 12 }).setHTML(htmlLabel))
+    .addTo(map);
+}
+
+// ============ TOGGLES ===========
 function setupToggle(card, toggle, activeClass = "active") {
   const toggleSwitch = () => {
     toggle.classList.toggle(activeClass);
     card.classList.toggle(activeClass);
   };
-
   card.addEventListener("click", toggleSwitch);
   toggle.addEventListener("click", (e) => {
     e.stopPropagation();
     toggleSwitch();
   });
 }
-
 setupToggle(tollCard, tollToggle, "active");
 setupToggle(highwayCard, highwayToggle, "active");
 setupToggle(fastestCard, fastestToggle, "active-purple");
 
-// Helper: parse "lat,lng"
-function parseLatLng(str) {
-  const trimmed = (str || "").trim();
-  const parts = trimmed.split(",").map((s) => s.trim());
+// ========== FORECAST: JOIN SPEEDBANDS → ROADS =========
+function normName(s) {
+  return (s || "").toUpperCase().replace(/\s+/g, " ").trim();
+}
 
-  if (parts.length !== 2) return null;
+// Apply worst band per road **by name** (fast POC)
+function applyBandsToRoads_ByName(speedRows) {
+  if (!roadsData) return;
 
-  const lat = parseFloat(parts[0]);
-  const lng = parseFloat(parts[1]);
-
-  if (
-    Number.isFinite(lat) &&
-    Number.isFinite(lng) &&
-    lat >= -90 &&
-    lat <= 90 &&
-    lng >= -180 &&
-    lng <= 180
-  ) {
-    return [lat, lng];
+  // Collect "worst" (i.e., smallest) band per road name
+  const worstByName = new Map();
+  for (const r of speedRows) {
+    const name = normName(r.RoadName);
+    const b = Math.max(1, Math.min(8, Number(r.SpeedBand) || 0));
+    if (!name || !b) continue;
+    const curr = worstByName.get(name);
+    worstByName.set(name, curr ? Math.min(curr, b) : b);
   }
-  return null;
+
+  // Write band onto features (property 'band')
+  for (const f of roadsData.features) {
+    const name = normName(f.properties.RD_CD_DESC);
+    f.properties.band = worstByName.get(name) ?? null;
+  }
+
+  // Push back + switch to forecast paint (gradient + width)
+  const src = map.getSource("roads");
+  if (src) src.setData(roadsData);
+  if (map.getLayer("roads-line")) {
+    map.setPaintProperty("roads-line", "line-color", forecastColorExpr);
+    map.setPaintProperty("roads-line", "line-width", [
+      "interpolate",
+      ["linear"],
+      ["zoom"],
+      10,
+      ["*", 0.9, forecastWidthExpr], // scale at low zoom
+      14,
+      forecastWidthExpr,
+    ]);
+    map.setPaintProperty("roads-line", "line-opacity", 0.98);
+  }
+  // slightly bump casing for clarity
+  if (map.getLayer("roads-case")) {
+    map.setPaintProperty("roads-case", "line-width", [
+      "interpolate",
+      ["linear"],
+      ["zoom"],
+      10,
+      2.0,
+      14,
+      4.0,
+    ]);
+  }
 }
 
-// Show error message
-function showError(message) {
-  errorMessage.textContent = message;
-  errorMessage.classList.add("visible");
-  setTimeout(() => {
-    errorMessage.classList.remove("visible");
-  }, 5000);
+function resetRoadStyleToBase() {
+  if (!roadsDataOriginal || !map.getSource("roads")) return;
+  roadsData = JSON.parse(JSON.stringify(roadsDataOriginal)); // drop 'band'
+  map.getSource("roads").setData(roadsData);
+  if (map.getLayer("roads-line")) {
+    map.setPaintProperty("roads-line", "line-color", neutralRoadColorExpr);
+    map.setPaintProperty("roads-line", "line-width", [
+      "interpolate",
+      ["linear"],
+      ["zoom"],
+      10,
+      1.2,
+      14,
+      2.4,
+    ]);
+    map.setPaintProperty("roads-line", "line-opacity", 0.95);
+  }
+  if (map.getLayer("roads-case")) {
+    map.setPaintProperty("roads-case", "line-width", [
+      "interpolate",
+      ["linear"],
+      ["zoom"],
+      10,
+      1.6,
+      14,
+      3.2,
+    ]);
+  }
 }
 
-// Format duration
-function formatDuration(seconds) {
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return minutes;
-  const hours = Math.floor(minutes / 60);
-  const mins = minutes % 60;
-  return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
-}
+// Forecast UI
+forecastBtn.addEventListener("click", async () => {
+  showingForecast = !showingForecast;
+  forecastBtn.classList.toggle("active", showingForecast);
+  forecastControls.classList.toggle("visible", showingForecast);
 
-// Get coordinates from input (either parsed or from route endpoint)
-async function getCoordinates(input) {
-  // Try to parse as coordinates first
-  const coords = parseLatLng(input);
-  if (coords) return coords;
-  
-  // If it's an address, we'll need to get coordinates from the route calculation
-  // This will be handled after we have the route
-  return null;
-}
+  // turn off carparks if forecast is on
+  if (showingForecast && showingCarparks) {
+    showingCarparks = false;
+    carparkBtn.classList.remove("active");
+    carparkOverlay.classList.remove("visible");
+    carparkMarkers.forEach((m) => m.remove());
+  }
 
-// Call AI prediction endpoint
-async function fetchAIPrediction(originCoords, destCoords) {
-  try {
-    console.log("Calling AI prediction with:", { originCoords, destCoords });
-    
-    const response = await fetch("/predict_route", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        origin: originCoords,
-        destination: destCoords
-      }),
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      console.warn("AI prediction not available:", errorData.error);
-      return null;
+  if (showingForecast) {
+    try {
+      const resp = await fetch(`/speedbands?hour=${currentForecastHour}`);
+      if (!resp.ok) throw new Error("speedbands fetch failed");
+      const rows = (await resp.json()) || [];
+      applyBandsToRoads_ByName(rows);
+    } catch (e) {
+      console.warn("speedbands unavailable:", e);
     }
-
-    const prediction = await response.json();
-    console.log("AI Prediction result:", prediction);
-    return prediction;
-  } catch (error) {
-    console.warn("AI prediction failed:", error);
-    return null;
+  } else {
+    resetRoadStyleToBase();
   }
-}
+});
 
-// Display AI predictions in the UI
-function displayAIPredictions(prediction) {
-  if (!prediction) return;
-  
-  // Create or update AI predictions section
-  let aiSection = document.getElementById("aiPredictions");
-  if (!aiSection) {
-    aiSection = document.createElement("div");
-    aiSection.id = "aiPredictions";
-    aiSection.className = "route-info";
-    aiSection.innerHTML = `
-      <div class="route-info-title">🤖 AI Traffic Predictions</div>
-      <div id="aiPredictionsContent"></div>
-    `;
-    routeInfo.parentNode.insertBefore(aiSection, routeInfo.nextSibling);
+forecastSlider.addEventListener("input", async (e) => {
+  currentForecastHour = parseInt(e.target.value, 10);
+  const now = new Date();
+  const forecastDate = new Date(
+    now.getTime() + currentForecastHour * 3600 * 1000
+  );
+  forecastTime.textContent = forecastDate.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+  forecastOffset.textContent =
+    currentForecastHour === 0 ? "Now" : `+${currentForecastHour}h`;
+  if (showingForecast) {
+    try {
+      const resp = await fetch(`/speedbands?hour=${currentForecastHour}`);
+      if (resp.ok) applyBandsToRoads_ByName(await resp.json());
+    } catch (e) {
+      console.warn(e);
+    }
   }
+});
+// init forecast display text
+(function () {
+  const now = new Date();
+  forecastTime.textContent = now.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+  forecastOffset.textContent = "Now";
+})();
 
-  const content = document.getElementById("aiPredictionsContent");
-  
-  if (prediction.error) {
-    content.innerHTML = `
-      <div style="color: #e53e3e; font-size: 0.875rem;">
-        ⚠️ AI prediction temporarily unavailable
-      </div>
-    `;
-    return;
-  }
+// ========== CARPARK TOGGLE ==========
+carparkBtn.addEventListener("click", () => {
+  showingCarparks = !showingCarparks;
+  carparkBtn.classList.toggle("active", showingCarparks);
+  carparkOverlay.classList.toggle("visible", showingCarparks);
 
-  const trafficConditions = prediction.traffic_conditions || {};
-  const aiInsights = prediction.ai_insights || {};
-  
-  let html = `
-    <div class="route-stats">
-      <div class="stat-item">
-        <div class="stat-value" style="color: ${
-          trafficConditions.predicted_congestion_level === 'HEAVY' ? '#e53e3e' : 
-          trafficConditions.predicted_congestion_level === 'MODERATE' ? '#d69e2e' : '#38a169'
-        }">${trafficConditions.predicted_congestion_level || 'MODERATE'}</div>
-        <div class="stat-label">Congestion Level</div>
-      </div>
-      <div class="stat-item">
-        <div class="stat-value">${Math.round((trafficConditions.overall_confidence || 0.5) * 100)}%</div>
-        <div class="stat-label">Confidence</div>
-      </div>
-    </div>
-  `;
-
-  // Add risk factors if available
-  if (aiInsights.risk_factors && aiInsights.risk_factors.length > 0) {
-    html += `
-      <div style="margin-top: 1rem; padding: 0.75rem; background: #fffaf0; border-radius: 8px; border-left: 4px solid #ed8936;">
-        <div style="font-size: 0.8125rem; font-weight: 600; color: #744210; margin-bottom: 0.5rem;">⚠️ Risk Factors</div>
-        <ul style="font-size: 0.75rem; color: #744210; margin: 0; padding-left: 1rem;">
-          ${aiInsights.risk_factors.map(factor => `<li>${factor}</li>`).join('')}
-        </ul>
-      </div>
-    `;
+  if (showingCarparks && showingForecast) {
+    showingForecast = false;
+    forecastBtn.classList.remove("active");
+    forecastControls.classList.remove("visible");
+    resetRoadStyleToBase();
   }
 
-  // Add recommended departure time
-  if (trafficConditions.recommended_departure_time) {
-    html += `
-      <div style="margin-top: 0.75rem; font-size: 0.8125rem; color: #4a5568;">
-        <span style="font-weight: 600;">🕒 Recommended departure:</span> ${trafficConditions.recommended_departure_time}
-      </div>
-    `;
+  if (showingCarparks) {
+    // Prefer last destination; otherwise request ALL
+    if (Array.isArray(lastDestCoords)) {
+      const [lng, lat] = lastDestCoords;
+      fetchCarparksNear(lat, lng, 1.0);
+    } else {
+      fetchCarparksNear(); // no args => get ALL
+    }
+  } else {
+    carparkMarkers.forEach((m) => m.remove());
   }
+});
 
-  // Show which models were used
-  if (prediction.models_used && prediction.models_used.length > 0) {
-    html += `
-      <div style="margin-top: 0.5rem; font-size: 0.75rem; color: #718096;">
-        AI Models used: ${prediction.models_used.join(', ')}
-      </div>
-    `;
-  }
-
-  content.innerHTML = html;
-  aiSection.classList.add("visible");
-}
-
-// Handle form submission
+// ========== ROUTING (unchanged from your last) =========
 document.getElementById("routeForm").addEventListener("submit", async (e) => {
   e.preventDefault();
-
   const originInput = document.getElementById("origin").value.trim();
   const destInput = document.getElementById("dest").value.trim();
+  if (!originInput || !destInput)
+    return showError("Please enter both origin and destination");
 
-  if (!originInput || !destInput) {
-    showError("Please enter both origin and destination");
-    return;
-  }
-
-  // Try to parse as coordinates, otherwise treat as address
   let origin = parseLatLng(originInput);
   let dest = parseLatLng(destInput);
-
-  // If not coordinates, keep as address string
   if (!origin) origin = originInput;
   if (!dest) dest = destInput;
 
@@ -244,7 +412,6 @@ document.getElementById("routeForm").addEventListener("submit", async (e) => {
     fastest: fastestToggle.classList.contains("active-purple"),
   };
 
-  // Update button state
   const originalBtnContent = calculateBtn.innerHTML;
   calculateBtn.innerHTML = '<span class="loading"></span> Calculating...';
   calculateBtn.disabled = true;
@@ -256,50 +423,45 @@ document.getElementById("routeForm").addEventListener("submit", async (e) => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ origin, destination: dest, filters }),
     });
-
     const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || "Route calculation failed");
+    if (!data.overview_polyline) throw new Error("No route polyline returned");
 
-    if (!resp.ok) {
-      throw new Error(data.error || "Route calculation failed");
-    }
-
-    console.log("Route response:", data);
-
-    if (!data.overview_polyline) {
-      throw new Error("No route polyline returned");
-    }
-
-    // Hide empty state
-    emptyState.classList.add("hidden");
-
-    // Decode Google encoded polyline
     const coords = polyline
       .decode(data.overview_polyline)
-      .map(([lat, lng]) => [lat, lng]);
+      .map(([lat, lng]) => [lng, lat]);
 
-    // Remove previous route and markers
-    if (currentRouteLayer) map.removeLayer(currentRouteLayer);
-    if (originMarker) map.removeLayer(originMarker);
-    if (destMarker) map.removeLayer(destMarker);
+    if (map.getLayer("route-layer")) map.removeLayer("route-layer");
+    if (map.getSource("route-source")) map.removeSource("route-source");
+    if (originMarker) originMarker.remove();
+    if (destMarker) destMarker.remove();
 
-    // Add route polyline
-    currentRouteLayer = L.polyline(coords, {
-      color: "#667eea",
-      weight: 5,
-      opacity: 0.8,
-      smoothFactor: 1,
-    }).addTo(map);
+    map.addSource("route-source", {
+      type: "geojson",
+      data: {
+        type: "Feature",
+        geometry: { type: "LineString", coordinates: coords },
+      },
+    });
+    map.addLayer({
+      id: "route-layer",
+      type: "line",
+      source: "route-source",
+      paint: { "line-color": "#667eea", "line-width": 5, "line-opacity": 0.8 },
+    });
 
-    // Add markers if coordinates available
-    if (Array.isArray(origin)) {
-      originMarker = L.marker(origin).addTo(map).bindPopup("<b>📍 Start</b>");
-    }
-    if (Array.isArray(dest)) {
-      destMarker = L.marker(dest).addTo(map).bindPopup("<b>🎯 Destination</b>");
-    }
+    const startLL = Array.isArray(origin) ? [origin[1], origin[0]] : coords[0];
+    const endLL = Array.isArray(dest)
+      ? [dest[1], dest[0]]
+      : coords[coords.length - 1];
+    originMarker = addPin(startLL, "<b>📍 Start</b>");
+    destMarker = addPin(endLL, "<b>📍 Destination</b>");
 
-    // Fit bounds to show entire route
-    map.fitBounds(currentRouteLayer.getBounds(), { padding: [50, 50] });
+    const bounds = coords.reduce(
+      (b, c) => b.extend(c),
+      new maplibregl.LngLatBounds(coords[0], coords[0])
+    );
+    map.fitBounds(bounds, { padding: 50 });
 
     document.getElementById("distanceValue").textContent =
       data.distance_km.toFixed(1);
@@ -308,50 +470,56 @@ document.getElementById("routeForm").addEventListener("submit", async (e) => {
     );
     routeInfo.classList.add("visible");
 
-    const destRaw = document.getElementById("dest").value.trim();
-    const destCoords = parseLatLng(destRaw);
+    const endPt = coords[coords.length - 1];
+    lastDestCoords = endPt;
+    fetchWeather({ lat: endPt[1], lon: endPt[0] });
 
-    const endPt = coords[coords.length - 1]; // [lat, lng]
-    let lastDestCoords = endPt; // store it
+    // Show the "Open in Google Maps" button
+    const googleMapsBtn = document.getElementById("googleMapsBtn");
+    if (googleMapsBtn) {
+      googleMapsBtn.style.display = "inline-flex"; // show the button
+      googleMapsBtn.onclick = () => {
+        const start = coords[0];
+        const dest = coords[coords.length - 1];
 
-    // Weather: prefer coords (more accurate than city name)
-    if (Array.isArray(endPt)) {
-      fetchWeather({ lat: endPt[0], lon: endPt[1] });
-    } else {
-      const destRaw = document.getElementById("dest").value.trim();
-      fetchWeather({ city: destRaw });
+        // Detect iOS or Android and open appropriate map app
+        let url;
+        if (/iPhone|iPad|Macintosh/i.test(navigator.userAgent)) {
+          url = `http://maps.apple.com/?saddr=${start[1]},${start[0]}&daddr=${dest[1]},${dest[0]}&dirflg=d`;
+        } else {
+          url = `https://www.google.com/maps/dir/?api=1&origin=${start[1]},${start[0]}&destination=${dest[1]},${dest[0]}&travelmode=driving`;
+        }
+        window.open(url, "_blank");
+      };
     }
 
-    // Carparks: always call with destination coords from the route
-    carparkToggleBtn.classList.add("active");
-    carparkOverlay.classList.add("visible");
-    fetchCarparksNear(lastDestCoords[0], lastDestCoords[1], 1.0);
+    // If carpark overlay is active, refresh markers near destination immediately
+    if (showingCarparks && Array.isArray(lastDestCoords)) {
+      const [lng, lat] = lastDestCoords;
+      fetchCarparksNear(lat, lng, 1.0);
+    }
 
-    // ========== AI PREDICTION INTEGRATION ==========
-    // Get coordinates for AI prediction
-    const startCoords = Array.isArray(origin) ? origin : coords[0];
-    const destinationCoords = Array.isArray(dest) ? dest : coords[coords.length - 1];
-    
-    console.log("Calling AI prediction with coordinates:", {
-      start: startCoords,
-      destination: destinationCoords
-    });
-    
-    // Fetch AI predictions
-    const aiPrediction = await fetchAIPrediction(startCoords, destinationCoords);
+    const startCoords = Array.isArray(origin)
+      ? origin
+      : [coords[0][1], coords[0][0]];
+    const destinationCoords = Array.isArray(dest)
+      ? dest
+      : [coords.at(-1)[1], coords.at(-1)[0]];
+    const aiPrediction = await fetchAIPrediction(
+      startCoords,
+      destinationCoords
+    );
     displayAIPredictions(aiPrediction);
-
   } catch (err) {
     console.error(err);
     showError(err.message || "Network error occurred");
-    emptyState.classList.remove("hidden");
   } finally {
     calculateBtn.innerHTML = originalBtnContent;
     calculateBtn.disabled = false;
   }
 });
 
-// ========== WEATHER FUNCTIONALITY ==========
+// ========== WEATHER ===========
 async function fetchWeather({ city, lat, lon } = {}) {
   try {
     const qs = city
@@ -359,10 +527,8 @@ async function fetchWeather({ city, lat, lon } = {}) {
       : Number.isFinite(lat) && Number.isFinite(lon)
       ? `?lat=${lat}&lon=${lon}`
       : "";
-
     const response = await fetch(`/get_weather${qs}`);
     const data = await response.json();
-
     const weatherWidget = document.getElementById("weatherWidget");
 
     const getWeatherIcon = (condition) => {
@@ -388,16 +554,11 @@ async function fetchWeather({ city, lat, lon } = {}) {
           <div class="weather-icon">${getWeatherIcon(
             data.forecast || "Fair"
           )}</div>
-          <div>
-            <div class="weather-temp">
-              ${Math.round(
-                Number.isFinite(+data.temperature) ? +data.temperature : 30
-              )}
-              <span class="weather-unit">°C</span>
-            </div>
-          </div>
+          <div><div class="weather-temp">${Math.round(
+            Number.isFinite(+data.temperature) ? +data.temperature : 30
+          )}<span class="weather-unit">°C</span></div></div>
         </div>
-        <div style="text-align: right;">
+        <div style="text-align:right;">
           <div class="weather-location">📍 ${locationLabel}</div>
           <div class="weather-condition">${
             data.forecast || "Fair Weather"
@@ -405,99 +566,66 @@ async function fetchWeather({ city, lat, lon } = {}) {
         </div>
       </div>
       <div class="weather-details">
-        <div class="weather-detail-item">
-          <div class="weather-detail-icon">💧</div>
-          <div class="weather-detail-value">${
-            Number.isFinite(+data.humidity) ? data.humidity : 75
-          }%</div>
-          <div class="weather-detail-label">Humidity</div>
-        </div>
-        <div class="weather-detail-item">
-          <div class="weather-detail-icon">💨</div>
-          <div class="weather-detail-value">${
-            Number.isFinite(+data.wind_speed) ? data.wind_speed : 15
-          } km/h</div>
-          <div class="weather-detail-label">Wind</div>
-        </div>
-        <div class="weather-detail-item">
-          <div class="weather-detail-icon">🌡️</div>
-          <div class="weather-detail-value">${
-            Number.isFinite(+data.feels_like) ? data.feels_like : 32
-          }°C</div>
-          <div class="weather-detail-label">Feels Like</div>
-        </div>
-      </div>
-    `;
+        <div class="weather-detail-item"><div class="weather-detail-icon">💧</div><div class="weather-detail-value">${
+          Number.isFinite(+data.humidity) ? data.humidity : 75
+        }%</div><div class="weather-detail-label">Humidity</div></div>
+        <div class="weather-detail-item"><div class="weather-detail-icon">💨</div><div class="weather-detail-value">${
+          Number.isFinite(+data.wind_speed) ? data.wind_speed : 15
+        } km/h</div><div class="weather-detail-label">Wind</div></div>
+        <div class="weather-detail-item"><div class="weather-detail-icon">🌡️</div><div class="weather-detail-value">${
+          Number.isFinite(+data.feels_like) ? data.feels_like : 32
+        }°C</div><div class="weather-detail-label">Feels Like</div></div>
+      </div>`;
   } catch (error) {
     console.error("Error fetching weather:", error);
-    document.getElementById("weatherWidget").innerHTML = `
-      <div class="weather-loading">
-        <div>❌ Unable to load weather</div>
-      </div>
-    `;
+    document.getElementById(
+      "weatherWidget"
+    ).innerHTML = `<div class="weather-loading"><div>❌ Unable to load weather</div></div>`;
   }
 }
-
-// Fetch weather on load
 fetchWeather();
-// Refresh weather every 10 minutes
 setInterval(fetchWeather, 600000);
 
-let carparkMarkers = [];
-let showingCarparks = false;
-let lastDestCoords = null;
-
-// ========== CARPARK FUNCTIONALITY ==========
-const carparkToggleBtn = document.getElementById("carparkToggleBtn");
-const carparkOverlay = document.getElementById("carparkOverlay");
-
+// ========== CARPARKS ==========
 async function fetchCarparksNear(lat, lon, radiusKm = 1.0) {
   const carparkList = document.getElementById("carparkList");
   const countEl = document.getElementById("carparkCount");
 
   try {
-    // Clear existing markers
-    carparkMarkers.forEach((m) => map.removeLayer(m));
+    // clear existing
+    carparkMarkers.forEach((m) => m.remove());
     carparkMarkers = [];
+    if (activeCarparkPopup) {
+      activeCarparkPopup.remove();
+      activeCarparkPopup = null;
+    }
 
     carparkList.innerHTML = `<div class="carpark-loading">🔎 Finding carparks near your destination…</div>`;
 
-    const resp = await fetch(
-      `/carparks?lat=${lat}&lon=${lon}&radius_km=${radiusKm}`
-    );
+    // build query
+    const hasCoords = Number.isFinite(lat) && Number.isFinite(lon);
+    const qs = hasCoords ? `?lat=${lat}&lon=${lon}&radius_km=${radiusKm}` : "";
+    const resp = await fetch(`/carparks${qs}`);
     const payload = await resp.json();
     if (!resp.ok) throw new Error(payload.error || "Failed to load carparks");
 
     const carparks = payload.carparks || [];
-    countEl.textContent = `${carparks.length} carpark${
-      carparks.length !== 1 ? "s" : ""
-    } within ${radiusKm} km`;
+    countEl.textContent = hasCoords
+      ? `${carparks.length} carpark${
+          carparks.length !== 1 ? "s" : ""
+        } within ${radiusKm} km`
+      : `${carparks.length} carpark${carparks.length !== 1 ? "s" : ""}`;
     carparkList.innerHTML = carparks.length
       ? ""
-      : `<div class="carpark-loading">No carparks found nearby.</div>`;
+      : `<div class="carpark-loading">No carparks found${
+          hasCoords ? " nearby." : "."
+        }</div>`;
 
+    // render markers + list
     carparks.forEach((cp) => {
       const { Latitude, Longitude } = cp.Location;
 
-      const marker = L.marker([Latitude, Longitude], {
-        icon: L.divIcon({
-          html: "🅿️",
-          className: "emoji-icon",
-          iconSize: [30, 30],
-        }),
-      }).addTo(map);
-
-      marker.bindPopup(`
-        <b>${cp.Development || "Carpark"}</b><br>
-        Available: ${cp.AvailableLots ?? "—"}<br>
-        Type: ${cp.LotType === "C" ? "Car" : cp.LotType || "—"}<br>
-        Agency: ${cp.Agency || "—"}<br>
-        Distance: ${cp.DistanceKm} km
-      `);
-
-      carparkMarkers.push(marker);
-
-      // Badge
+      // Determine availability class
       let badgeClass = "available";
       let badgeText = `${cp.AvailableLots ?? "—"} lots`;
       const lots = Number(cp.AvailableLots);
@@ -510,13 +638,56 @@ async function fetchCarparksNear(lat, lon, radiusKm = 1.0) {
         }
       }
 
-      // List item
+      // 🅿️ marker element (uses .custom-marker CSS)
+      const el = document.createElement("div");
+      el.className = "custom-marker";
+      el.textContent = "🅿️";
+
+      // Popup (with ❌ button)
+      const popup = new maplibregl.Popup({
+        offset: 18,
+        closeButton: true, // ✅ show X button
+        closeOnClick: false, // we manage this manually
+      }).setHTML(`
+        <b>${cp.Development || "Carpark"}</b><br>
+        Available: ${cp.AvailableLots ?? "—"}<br>
+        Type: ${cp.LotType === "C" ? "Car" : cp.LotType || "—"}<br>
+        Agency: ${cp.Agency || "—"}<br>
+        ${cp.DistanceKm != null ? `Distance: ${cp.DistanceKm} km` : ""}
+      `);
+
+      const marker = new maplibregl.Marker({ element: el, anchor: "bottom" })
+        .setLngLat([Longitude, Latitude])
+        .setPopup(popup)
+        .addTo(map);
+      carparkMarkers.push(marker);
+
+      // Marker click → open this popup, close others
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (activeCarparkPopup && activeCarparkPopup !== popup) {
+          activeCarparkPopup.remove();
+        }
+        popup.addTo(map);
+        activeCarparkPopup = popup;
+      });
+
+      // When user manually closes with ❌
+      popup.on("close", () => {
+        if (activeCarparkPopup === popup) {
+          activeCarparkPopup = null;
+        }
+      });
+
+      // Sidebar list item
       const item = document.createElement("div");
       item.className = "carpark-item";
       item.innerHTML = `
         <div class="carpark-item-header">
           <div class="carpark-name">${cp.Development || "Carpark"}</div>
-          <div class="carpark-availability"><div class="availability-badge ${badgeClass}">${badgeText}</div></div>
+          <div class="carpark-availability">
+            <div class="availability-badge ${badgeClass}">${badgeText}</div>
+          </div>
         </div>
         <div class="carpark-info">
           <div class="carpark-info-item"><span>📍</span><span>${
@@ -528,15 +699,23 @@ async function fetchCarparksNear(lat, lon, radiusKm = 1.0) {
           <div class="carpark-info-item"><span>🏢</span><span>${
             cp.Agency || "—"
           }</span></div>
-          <div class="carpark-info-item"><span>📏</span><span>${
-            cp.DistanceKm
-          } km</span></div>
+          ${
+            cp.DistanceKm != null
+              ? `<div class="carpark-info-item"><span>📏</span><span>${cp.DistanceKm} km</span></div>`
+              : ""
+          }
         </div>
       `;
+
       item.addEventListener("click", () => {
-        map.setView([Latitude, Longitude], 16);
-        marker.openPopup();
+        map.flyTo({ center: [Longitude, Latitude], zoom: 16 });
+        if (activeCarparkPopup && activeCarparkPopup !== popup) {
+          activeCarparkPopup.remove();
+        }
+        popup.addTo(map);
+        activeCarparkPopup = popup;
       });
+
       carparkList.appendChild(item);
     });
   } catch (error) {
@@ -547,117 +726,89 @@ async function fetchCarparksNear(lat, lon, radiusKm = 1.0) {
   }
 }
 
-async function fetchAllCarparks(limit = 150) {
-  const carparkList = document.getElementById("carparkList");
-  const countEl = document.getElementById("carparkCount");
-
+// ========== AI PREDICTION ==========
+async function fetchAIPrediction(originCoords, destCoords) {
   try {
-    carparkMarkers.forEach((m) => map.removeLayer(m));
-    carparkMarkers = [];
-    carparkList.innerHTML = `<div class="carpark-loading">🔎 Loading carparks across Singapore…</div>`;
-
-    // Optional timeout so UI never hangs
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 12000);
-
-    const resp = await fetch(`/carparks?limit=${limit}`, {
-      signal: controller.signal,
+    const response = await fetch("/predict_route", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ origin: originCoords, destination: destCoords }),
     });
-    clearTimeout(timer);
-
-    const payload = await resp.json();
-    if (!resp.ok) throw new Error(payload.error || "Failed to load carparks");
-
-    const carparks = payload.carparks || [];
-    countEl.textContent = `${carparks.length} carparks across Singapore`;
-    carparkList.innerHTML = carparks.length
-      ? ""
-      : `<div class="carpark-loading">No carparks returned.</div>`;
-
-    carparks.forEach((cp) => {
-      const { Latitude, Longitude } = cp.Location;
-
-      const marker = L.marker([Latitude, Longitude], {
-        icon: L.divIcon({
-          html: "🅿️",
-          className: "emoji-icon",
-          iconSize: [30, 30],
-        }),
-      }).addTo(map);
-      marker.bindPopup(`
-        <b>${cp.Development || "Carpark"}</b><br>
-        Available: ${cp.AvailableLots ?? "—"}<br>
-        Type: ${cp.LotType === "C" ? "Car" : cp.LotType || "—"}<br>
-        Agency: ${cp.Agency || "—"}
-      `);
-      carparkMarkers.push(marker);
-
-      let badgeClass = "available";
-      let badgeText = `${cp.AvailableLots ?? "—"} lots`;
-      const lots = Number(cp.AvailableLots);
-      if (Number.isFinite(lots)) {
-        if (lots < 10) {
-          badgeClass = "full";
-          badgeText = "Almost Full";
-        } else if (lots < 30) {
-          badgeClass = "limited";
-        }
-      }
-
-      const item = document.createElement("div");
-      item.className = "carpark-item";
-      item.innerHTML = `
-        <div class="carpark-item-header">
-          <div class="carpark-name">${cp.Development || "Carpark"}</div>
-          <div class="carpark-availability"><div class="availability-badge ${badgeClass}">${badgeText}</div></div>
-        </div>
-        <div class="carpark-info">
-          <div class="carpark-info-item"><span>📍</span><span>${
-            cp.Area || "—"
-          }</span></div>
-          <div class="carpark-info-item"><span>🚗</span><span>${
-            cp.LotType === "C" ? "Car" : cp.LotType || "—"
-          }</span></div>
-          <div class="carpark-info-item"><span>🏢</span><span>${
-            cp.Agency || "—"
-          }</span></div>
-        </div>
-      `;
-      item.addEventListener("click", () => {
-        map.setView([Latitude, Longitude], 16);
-        marker.openPopup();
-      });
-      carparkList.appendChild(item);
-    });
-
-    // Optionally zoom map to show the overall island
-    // map.setView([1.3521, 103.8198], 12);
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      console.warn(
+        "AI prediction not available:",
+        errorData.error || response.status
+      );
+      return null;
+    }
+    return await response.json();
   } catch (error) {
-    carparkList.innerHTML = `<div class="carpark-loading">❌ Unable to load carpark data. ${
-      error.message || ""
-    }</div>`;
+    console.warn("AI prediction failed:", error);
+    return null;
   }
 }
-
-carparkToggleBtn.addEventListener("click", () => {
-  showingCarparks = !showingCarparks;
-  carparkToggleBtn.classList.toggle("active");
-  carparkOverlay.classList.toggle("visible");
-
-  if (showingCarparks) {
-    carparkToggleBtn.innerHTML = "<span>🅿️</span><span>Hide Carparks</span>";
-    if (carparkMarkers.length === 0) {
-      // If we have a destination, show near it; else show all
-      if (Array.isArray(lastDestCoords)) {
-        fetchCarparksNear(lastDestCoords[0], lastDestCoords[1], 1.0);
-      } else {
-        fetchAllCarparks(300);
-      }
-    } else {
-      carparkMarkers.forEach((m) => m.addTo(map));
-    }
-  } else {
-    carparkToggleBtn.innerHTML = "<span>🅿️</span><span>Show Carparks</span>";
-    carparkMarkers.forEach((m) => map.removeLayer(m));
+function displayAIPredictions(prediction) {
+  if (!prediction) return;
+  let aiSection = document.getElementById("aiPredictions");
+  if (!aiSection) {
+    aiSection = document.createElement("div");
+    aiSection.id = "aiPredictions";
+    aiSection.className = "route-info";
+    aiSection.innerHTML = `<div class="route-info-title">🤖 AI Traffic Predictions</div><div id="aiPredictionsContent"></div>`;
+    routeInfo.parentNode.insertBefore(aiSection, routeInfo.nextSibling);
   }
-});
+
+  const content = document.getElementById("aiPredictionsContent");
+  if (prediction.error) {
+    content.innerHTML = `<div style="color:#e53e3e;font-size:0.875rem;">⚠️ AI prediction temporarily unavailable</div>`;
+    return;
+  }
+
+  const trafficConditions = prediction.traffic_conditions || {};
+  const aiInsights = prediction.ai_insights || {};
+  content.innerHTML = `
+    <div class="route-stats">
+      <div class="stat-item">
+        <div class="stat-value" style="color:${
+          trafficConditions.predicted_congestion_level === "HEAVY"
+            ? "#e53e3e"
+            : trafficConditions.predicted_congestion_level === "MODERATE"
+            ? "#d69e2e"
+            : "#38a169"
+        }">${trafficConditions.predicted_congestion_level || "MODERATE"}</div>
+        <div class="stat-label">Congestion Level</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-value">${Math.round(
+          (trafficConditions.overall_confidence ?? 0.5) * 100
+        )}%</div>
+        <div class="stat-label">Confidence</div>
+      </div>
+    </div>
+    ${
+      aiInsights.risk_factors && aiInsights.risk_factors.length
+        ? `<div style="margin-top:1rem;padding:.75rem;background:#fffaf0;border-radius:8px;border-left:4px solid #ed8936;">
+             <div style="font-size:.8125rem;font-weight:600;color:#744210;margin-bottom:.5rem;">⚠️ Risk Factors</div>
+             <ul style="font-size:.75rem;color:#744210;margin:0;padding-left:1rem;">
+               ${aiInsights.risk_factors.map((f) => `<li>${f}</li>`).join("")}
+             </ul>
+           </div>`
+        : ""
+    }
+    ${
+      trafficConditions.recommended_departure_time
+        ? `<div style="margin-top:.75rem;font-size:.8125rem;color:#4a5568;">
+             <span style="font-weight:600;">🕒 Recommended departure:</span> ${trafficConditions.recommended_departure_time}
+           </div>`
+        : ""
+    }
+    ${
+      prediction.models_used && prediction.models_used.length
+        ? `<div style="margin-top:.5rem;font-size:.75rem;color:#718096;">AI Models used: ${prediction.models_used.join(
+            ", "
+          )}</div>`
+        : ""
+    }`;
+  aiSection.classList.add("visible");
+}

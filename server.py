@@ -232,6 +232,45 @@ def _haversine_km(lat1, lon1, lat2, lon2):
     a = sin(dphi/2)**2 + cos(p1)*cos(p2)*sin(dlmb/2)**2
     return 2 * R * asin(sqrt(a))
 
+@app.get("/speedbands")
+def speedbands():
+    import re
+    hour = request.args.get("hour", default=0, type=int)
+
+    def clean_name(name):
+        # remove things in parentheses like (PIE)
+        return re.sub(r"\s*\(.*?\)\s*", "", name).strip()
+
+    def band_for(base, hour):
+        b = base + (hour % 4) - 2
+        return max(1, min(8, b))
+
+    roads = [
+        ("Pan Island Expressway (PIE)", 1.3500, 103.7800, 1.3500, 103.9600, 5),
+        ("Ayer Rajah Expressway (AYE)", 1.2800, 103.7500, 1.2800, 103.8800, 4),
+        ("East Coast Parkway (ECP)", 1.3000, 103.8600, 1.3000, 103.9800, 6),
+        ("Central Expressway (CTE)", 1.3200, 103.8500, 1.3800, 103.8500, 3),
+        ("Orchard Road", 1.3040, 103.8250, 1.3040, 103.8400, 2),
+    ]
+
+    rows = []
+    for name, slat, slon, elat, elon, base in roads:
+        clean = clean_name(name)
+        rows.append({
+            "LinkID": clean.replace(" ", "_"),
+            "RoadName": clean,
+            "RoadCategory": 3,
+            "SpeedBand": band_for(base, hour),
+            "MinimumSpeed": 40,
+            "MaximumSpeed": 80,
+            "StartLat": slat,
+            "StartLon": slon,
+            "EndLat": elat,
+            "EndLon": elon,
+        })
+    return jsonify(rows), 200
+
+
 @app.get("/carparks")
 def carparks_nearby():
     lat = request.args.get("lat", type=float)
