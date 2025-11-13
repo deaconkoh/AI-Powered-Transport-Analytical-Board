@@ -24,21 +24,72 @@ def lambda_handler(event, context):
 
     headers = {"AccountKey": key}
     base = "https://datamall2.mytransport.sg/ltaodataservice"
-    data = {}
 
-    # Fetch carpark availability
-    url = f"{base}/CarParkAvailabilityv2"
-    carparks = http_get(url, headers)
-    data["value"] = carparks.get("value", [])
-
+    # use one timestamp for this whole snapshot
     ts = time.strftime("%Y%m%d-%H%M%S")
-    keypath = f"raw/lta/carparks/{ts}.json"
+
+    #########################
+    # Carpark availability
+    #########################
+    cp_url = f"{base}/CarParkAvailabilityv2"
+    carparks = http_get(cp_url, headers)
+
+    carpark_payload = {
+        "fetched_at": ts,
+        "value": carparks.get("value", []),
+    }
+
+    carpark_keypath = f"raw/lta/carparks/{ts}.json"
 
     s3.put_object(
         Bucket=RAW_BUCKET,
-        Key=keypath,
-        Body=json.dumps(data).encode("utf-8"),
+        Key=carpark_keypath,
+        Body=json.dumps(carpark_payload).encode("utf-8"),
         ContentType="application/json",
     )
 
-    return {"ok": True, "file": keypath}
+    #########################
+    # Traffic Speed Bands (Bronze for Big Data)
+    #########################
+    # TrafficSpeedBands is paginated: up to 500 records per call, use $skip
+    speed_rows = []
+    skip = 0
+    PAGE_SIZE = 500
+    MAX_PAGES = 40  # safety cap
+
+    while True:
+        sb_url = f"{base}/v4/TrafficSpeedBands?$skip={skip}"
+        page = http_get(sb_url, headers)
+        batch = page.get("value", [])
+        if not batch:
+            break
+
+        speed_rows.extend(batch)
+
+        # stop if less than a full page or we hit safety cap
+        if len(batch) < PAGE_SIZE or skip >= PAGE_SIZE * MAX_PAGES:
+            break
+
+        skip += PAGE_SIZE
+
+    speedband_payload = {
+        "fetched_at": ts,
+        "value": speed_rows,
+    }
+
+    speedband_keypath = f"raw/lta/speedbands/{ts}.json"
+
+    s3.put_object(
+        Bucket=RAW_BUCKET,
+        Key=speedband_keypath,
+        Body=json.dumps(speedband_payload).encode("utf-8"),
+        ContentType="application/json",
+    )
+
+    return {
+        "ok": True,
+        "carpark_file": carpark_keypath,
+        "carpark_count": len(carpark_payload["value"]),
+        "speedband_file": speedband_keypath,
+        "speedband_count": len(speedband_payload["value"]),
+    }

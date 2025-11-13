@@ -12,6 +12,29 @@ resource "aws_s3_bucket" "raw" {
   force_destroy = true
 }
 
+# Enable versioning on the RAW bucket for point-in-time recovery
+resource "aws_s3_bucket_versioning" "raw" {
+  bucket = aws_s3_bucket.raw.id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+# Lifecycle rule to clean up very old object versions
+resource "aws_s3_bucket_lifecycle_configuration" "raw" {
+  bucket = aws_s3_bucket.raw.id
+
+  rule {
+    id     = "expire-old-versions"
+    status = "Enabled"
+
+    noncurrent_version_expiration {
+      noncurrent_days = 30  # keep previous versions for 30 days
+    }
+  }
+}
+
 resource "aws_s3_bucket_public_access_block" "raw" {
   bucket                  = aws_s3_bucket.raw.id
   block_public_acls       = true
@@ -106,7 +129,7 @@ resource "aws_lambda_function" "lta_ingest" {
   handler          = "lta_ingest.lambda_handler"
   filename         = data.archive_file.lta_zip.output_path
   source_code_hash = filebase64sha256(data.archive_file.lta_zip.output_path)
-  timeout          = 60
+  timeout          = 120
 
   environment {
     variables = {
@@ -181,6 +204,21 @@ resource "aws_lambda_permission" "nea_invoke" {
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.nea_rule.arn
 }
+
+resource "aws_glue_trigger" "speedband_etl_schedule" {
+  count    = var.enable_glue ? 1 : 0
+  name     = "${var.project_name}-speedband-etl-every-15m"
+  type     = "SCHEDULED"
+
+  schedule = "cron(0/15 * * * ? *)"
+
+  actions {
+    job_name = aws_glue_job.speedband_etl.name
+  }
+
+  enabled = true
+}
+
 
 ############################
 # Outputs

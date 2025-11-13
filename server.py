@@ -4,6 +4,7 @@ from flask import Flask, render_template, request, jsonify
 from botocore.exceptions import ClientError
 
 USE_SM = os.getenv("USE_SM", "false").lower() == "true"
+USE_LIVE_APIS = os.getenv("USE_LIVE_APIS", "false").lower() == "true"
 SM_ENDPOINT = os.getenv("SM_ENDPOINT", "")
 sm_rt = boto3.client("sagemaker-runtime") if USE_SM else None
 RAW_BUCKET = os.getenv("RAW_BUCKET")  # e.g. traffic-ai-raw-<acct>-us-east-1
@@ -103,7 +104,11 @@ def health():
 
 @app.get("/healthz")
 def healthz():
-    return health()
+    return jsonify({
+        "ok": True,
+        "use_live_apis": USE_LIVE_APIS,
+        "use_sm": USE_SM
+    })
 
 # ---------- basic pages ----------
 @app.route("/")
@@ -134,7 +139,7 @@ def route():
     origin = body.get("origin")
     destination = body.get("destination")
     filters = body.get("filters", {})
-    waypoints = body.get("stops")  # optional
+    waypoints = body.get("stops")
 
     def validate_location(loc, name):
         if isinstance(loc, str):
@@ -148,10 +153,9 @@ def route():
             if not (isinstance(lat, (int, float)) and isinstance(lng, (int, float))):
                 return None, f"{name} coordinates must be numbers"
             if not (-90 <= lat <= 90 and -180 <= lng <= 180):
-                return None, f"{name} has invalid lat/lng values"
+                return None, f"{name} has invalid lat/lng"
             return tuple(loc), None
-        else:
-            return None, f"{name} must be an address string or [lat, lng] array"
+        return None, f"{name} must be an address string or [lat, lng] array"
 
     origin_processed, origin_err = validate_location(origin, "origin")
     if origin_err:
@@ -172,6 +176,20 @@ def route():
                 return jsonify(error=wp_err), 400
             waypoints_processed.append(wp_processed)
 
+    # ---------- When USE_LIVE_API = false for K6 Testing ----------
+    if not USE_LIVE_APIS:
+        return jsonify({
+            "mode": "mock",
+            "origin": origin_processed,
+            "destination": dest_processed,
+            "polyline": [[origin_processed[0], origin_processed[1]],
+                         [dest_processed[0], dest_processed[1]]],
+            "distance_km": 5.4,
+            "duration_min": 12,
+            "note": "Mock routing enabled because USE_LIVE_APIS=false"
+        }), 200
+
+    # ---------- Live Mode call Google API ----------
     result, err = route_google(
         origin_processed,
         dest_processed,

@@ -62,8 +62,14 @@ variable "raw_bucket_name" {
 
 variable "enable_ingestion" {
   type        = bool
-  default     = true
+  default     = false
   description = "Attach EventBridge targets to Lambda (on/off)."
+}
+
+variable "enable_glue" {
+  type        = bool
+  default     = false
+  description = "Enable or disable Glue scheduled ETL trigger."
 }
 
 variable "vpc_id" {
