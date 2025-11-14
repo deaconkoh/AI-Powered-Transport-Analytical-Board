@@ -1,0 +1,27 @@
+{
+  "training_info": {
+    "timestamp": "2025-11-14T01:32:33.097058",
+    "total_samples": 118500,
+    "device_used": "cpu",
+    "training_time": "2025-11-14 01:32:33",
+    "pytorch_version": "2.8.0+cpu"
+  },
+  "model_config": {
+    "batch_size": 256,
+    "learning_rate": 0.001,
+    "epochs": 200,
+    "patience": 25,
+    "hidden_layers": [
+      512,
+      256,
+      128,
+      64
+    ],
+    "dropout_rate": 0.4,
+    "validation_split": 0.15,
+    "test_split": 0.15
+  },
+  "test_metrics": {
+    "mae": 5.850147636027276,
+    "rmse": 8.810285639248598,
+    "mape": 
