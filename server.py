@@ -132,6 +132,21 @@ def get_weather():
     }
     return jsonify(safe)
 
+@app.route('/predictions')
+def predictions():
+    return render_template('predictions.html')
+
+@app.route('/api/predictions')
+def api_predictions():
+    """Serve prediction data for the frontend"""
+    prediction_file = 'src/backend/prediction/current_traffic_predictions.json'
+    try:
+        with open(prediction_file, 'r') as f:
+            prediction_data = json.load(f)
+        return jsonify(prediction_data)
+    except FileNotFoundError:
+        return jsonify({'error': 'Prediction data not found'}), 404
+
 # ---------- routing (Google Directions) ----------
 @app.post("/route")
 def route():

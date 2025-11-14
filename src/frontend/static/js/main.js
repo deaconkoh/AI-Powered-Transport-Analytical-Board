@@ -812,3 +812,7 @@ function displayAIPredictions(prediction) {
     }`;
   aiSection.classList.add("visible");
 }
+
+document.getElementById('predictionsBtn').addEventListener('click', () => {
+    window.location.href = '/predictions';
+});

@@ -35,10 +35,10 @@ class TrafficPredictor(torch.nn.Module):
         return x
 
 class ProductionPredictor:
-    def __init__(self, model_path, recent_data_dir="gold_recent_24h"):
+    def __init__(self, model_path, test_data_dir="test_data"):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model_path = model_path
-        self.recent_data_dir = recent_data_dir
+        self.test_data_dir = test_data_dir
         self.model = None
         self.scaler = None
         self.label_encoders = None
@@ -64,7 +64,10 @@ class ProductionPredictor:
         # Load preprocessing objects
         preprocess_path = self.model_path.replace('.pth', '_preprocess.joblib')
         if not os.path.exists(preprocess_path):
-            raise FileNotFoundError(f"Preprocessing file not found: {preprocess_path}")
+            # Try alternative path
+            preprocess_path = self.model_path.replace('best_model.pth', 'preprocess.joblib')
+            if not os.path.exists(preprocess_path):
+                raise FileNotFoundError(f"Preprocessing file not found: {preprocess_path}")
         
         preprocess_data = joblib.load(preprocess_path)
         self.scaler = preprocess_data['scaler']
@@ -86,21 +89,21 @@ class ProductionPredictor:
         print(f"Production model loaded: {len(self.feature_names)} features")
         print(f"Device: {self.device}")
     
-    def load_recent_data(self):
-        """Load the most recent 24-hour data"""
-        recent_files = glob.glob(os.path.join(self.recent_data_dir, "recent_gold_*.csv"))
-        if not recent_files:
-            raise FileNotFoundError("No recent data files found")
+    def load_test_data(self):
+        """Load test data from test_data folder"""
+        test_files = glob.glob(os.path.join(self.test_data_dir, "*.csv"))
+        if not test_files:
+            raise FileNotFoundError(f"No test data files found in {self.test_data_dir}")
         
-        # Get the most recent file
-        latest_file = max(recent_files, key=os.path.getctime)
+        # Get the most recent file or use the first one
+        latest_file = max(test_files, key=os.path.getctime)
         df = pd.read_csv(latest_file)
         
         # Ensure datetime
         if 'Retrieval_Time' in df.columns:
             df['Retrieval_Time'] = pd.to_datetime(df['Retrieval_Time'])
         
-        print(f"Loaded recent data: {len(df):,} records from {os.path.basename(latest_file)}")
+        print(f"Loaded test data: {len(df):,} records from {os.path.basename(latest_file)}")
         return df
     
     def prepare_features(self, df):
@@ -133,6 +136,9 @@ class ProductionPredictor:
                     )
                 
                 features_df[col] = self.label_encoders[col].transform(features_df[col])
+        
+        # Ensure correct order of features
+        features_df = features_df[self.feature_names]
         
         # Scale features
         features_scaled = self.scaler.transform(features_df.values)
@@ -193,30 +199,33 @@ class ProductionPredictor:
         print("=" * 50)
         
         try:
-            # 1. Load recent data
-            recent_data = self.load_recent_data()
+            # 1. Load test data
+            test_data = self.load_test_data()
             
-            if recent_data.empty:
-                print("No recent data available for prediction")
+            if test_data.empty:
+                print("No test data available for prediction")
                 return None
             
             # 2. Prepare features
-            features = self.prepare_features(recent_data)
+            features = self.prepare_features(test_data)
             
             # 3. Make predictions
             predictions = self.predict(features)
             
             # 4. Create heatmap data
-            heatmap_data = self.create_heatmap_data(recent_data, predictions)
+            heatmap_data = self.create_heatmap_data(test_data, predictions)
             
-            # 5. Save predictions
-            output_file = "current_traffic_predictions.json"
+            # 5. Save predictions to the specified backend path
+            output_dir = "src/backend/prediction"
+            os.makedirs(output_dir, exist_ok=True)  # Create directory if it doesn't exist
+            output_file = os.path.join(output_dir, "current_traffic_predictions.json")
+            
             with open(output_file, 'w') as f:
                 json.dump(heatmap_data, f, indent=2)
             
             # 6. Print summary
             avg_predicted_speed = np.mean(predictions)
-            avg_current_speed = recent_data['AverageSpeed'].mean()
+            avg_current_speed = test_data['AverageSpeed'].mean()
             
             print(f"PREDICTION SUMMARY:")
             print(f"   Road segments predicted: {len(heatmap_data):,}")
@@ -235,10 +244,10 @@ class ProductionPredictor:
 def main():
     """Main function for production predictions"""
     try:
-        # Initialize predictor
+        # Initialize predictor with updated paths
         predictor = ProductionPredictor(
-            model_path="traffic_models/traffic_predictor_final.pth",
-            recent_data_dir="gold_recent_24h"
+            model_path="traffic_models/best_model.pth",
+            test_data_dir="test_data"
         )
         
         # Run prediction pipeline
