@@ -192,17 +192,26 @@ def route():
             waypoints_processed.append(wp_processed)
 
     # ---------- When USE_LIVE_API = false for K6 Testing ----------
-    if not USE_LIVE_APIS:
-        return jsonify({
-            "mode": "mock",
-            "origin": origin_processed,
-            "destination": dest_processed,
-            "polyline": [[origin_processed[0], origin_processed[1]],
-                         [dest_processed[0], dest_processed[1]]],
-            "distance_km": 5.4,
-            "duration_min": 12,
-            "note": "Mock routing enabled because USE_LIVE_APIS=false"
-        }), 200
+        if not USE_LIVE_APIS:
+            mock_polyline = None
+            if isinstance(origin_processed, tuple) and isinstance(dest_processed, tuple):
+                mock_polyline = [
+                    [origin_processed[0], origin_processed[1]],
+                    [dest_processed[0], dest_processed[1]],
+                ]
+
+            return jsonify({
+                "mode": "mock",
+                "origin": origin_processed,
+                "destination": dest_processed,
+                # array of [lat, lng] pairs for the frontend
+                "polyline": mock_polyline,
+                # keep names consistent with live mode
+                "distance_km": 5.4,
+                "eta_seconds": 12 * 60,
+                "note": "Mock routing enabled because USE_LIVE_APIS=false"
+            }), 200
+
 
     # ---------- Live Mode call Google API ----------
     result, err = route_google(
@@ -214,7 +223,31 @@ def route():
     if err:
         msg, code = err
         return jsonify(error=msg), code
-    return jsonify(result), 200
+
+    # Normalise polyline field
+    poly = (
+        result.get("overview_polyline")
+        or result.get("polyline")
+        or (
+            result.get("routes", [{}])[0]
+            .get("overview_polyline", {})
+            .get("points")
+            if isinstance(result.get("routes"), list) and result["routes"]
+            else None
+        )
+    )
+
+    if not poly:
+        # Surface as backend error instead of confusing frontend
+        return jsonify(error="Upstream route had no overview_polyline"), 502
+
+    response = {
+        "overview_polyline": poly,
+        "distance_km": result.get("distance_km"),
+        "eta_seconds": result.get("eta_seconds"),
+        # add any other fields you want to expose
+    }
+    return jsonify(response), 200
 
 # ---------- AI Prediction Route ----------
 @app.post("/predict_route")

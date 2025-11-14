@@ -24,23 +24,11 @@ let originMarker = null;
 let destMarker = null;
 let carparkMarkers = [];
 let showingCarparks = false;
-let showingForecast = false;
 let lastDestCoords = null;
-let currentForecastHour = 0;
-
-let roadsData = null; // mutable copy
-let roadsDataOriginal = null; // pristine copy to reset
 let activeCarparkPopup = null;
-let boundCloseOnMapClick = false;
 
 // ================= DOM HOOKS ================
-const forecastBtn = document.getElementById("forecastBtn");
 const carparkBtn = document.getElementById("carparkBtn");
-const forecastControls = document.getElementById("forecastControls");
-const forecastSlider = document.getElementById("forecastSlider");
-const forecastTime = document.getElementById("forecastTime");
-const forecastOffset = document.getElementById("forecastOffset");
-
 const tollToggle = document.getElementById("tollToggle");
 const tollCard = document.getElementById("tollCard");
 const highwayToggle = document.getElementById("highwayToggle");
@@ -51,112 +39,6 @@ const calculateBtn = document.getElementById("calculateBtn");
 const errorMessage = document.getElementById("errorMessage");
 const routeInfo = document.getElementById("routeInfo");
 const carparkOverlay = document.getElementById("carparkOverlay");
-
-// ================= LOAD BASE ROAD NETWORK =================
-const neutralRoadColorExpr = [
-  "match",
-  ["get", "RD_CATG__1"],
-  "Category 1",
-  "#ff6b6b",
-  "Category 2",
-  "#ff8e4d",
-  "Category 3",
-  "#ffd166",
-  "Category 4",
-  "#7bd389",
-  "Category 5",
-  "#4db6ac",
-  "Category 6",
-  "#64b5f6",
-  "Category 7",
-  "#ba68c8",
-  "Category 8",
-  "#9575cd",
-  /* default */ "#aaaaaa",
-];
-
-// Forecast gradient (match the card): green → yellow → orange → red
-// NOTE: LTA band: 8 fast (low congestion, green) ... 1 slow (heavy, red)
-const forecastColorExpr = [
-  "interpolate",
-  ["linear"],
-  ["to-number", ["coalesce", ["get", "band"], 8]],
-  1,
-  "#ef4444", // red (heavy)
-  3,
-  "#f97316", // orange
-  5,
-  "#eab308", // yellow
-  8,
-  "#22c55e", // green (low)
-];
-
-// Thicker for worse congestion (band 1 thick → band 8 thin)
-const forecastWidthExpr = [
-  "interpolate",
-  ["linear"],
-  ["to-number", ["coalesce", ["get", "band"], 8]],
-  1,
-  4.8,
-  8,
-  1.6,
-];
-
-map.on("load", async () => {
-  try {
-    const res = await fetch("../static/js/roads_wgs84.geojson"); // put file next to this JS
-    if (!res.ok) throw new Error("Failed to load road network GeoJSON");
-    const roads = await res.json();
-
-    // keep copies so we can mutate/reset
-    roadsDataOriginal = roads;
-    roadsData = JSON.parse(JSON.stringify(roads));
-
-    map.addSource("roads", {
-      type: "geojson",
-      data: roadsData,
-      lineMetrics: true,
-    });
-
-    // casing
-    map.addLayer({
-      id: "roads-case",
-      type: "line",
-      source: "roads",
-      layout: { "line-cap": "round", "line-join": "round" },
-      paint: {
-        "line-color": "#ffffff",
-        "line-opacity": 0.55,
-        "line-width": ["interpolate", ["linear"], ["zoom"], 10, 1.6, 14, 3.2],
-      },
-    });
-
-    // base (neutral) view by category
-    map.addLayer({
-      id: "roads-line",
-      type: "line",
-      source: "roads",
-      layout: { "line-cap": "round", "line-join": "round" },
-      paint: {
-        "line-color": neutralRoadColorExpr,
-        "line-opacity": 0.95,
-        "line-width": ["interpolate", ["linear"], ["zoom"], 10, 1.2, 14, 2.4],
-      },
-    });
-
-    // Fit to roads if turf available
-    try {
-      if (typeof turf !== "undefined") {
-        const bbox = turf.bbox(roadsData);
-        map.fitBounds(bbox, { padding: 40, duration: 0 });
-      }
-    } catch (e) {
-      console.warn("turf bbox failed, skipping auto-fit:", e);
-    }
-  } catch (err) {
-    console.error("Failed to load roads layer:", err);
-  }
-});
 
 // ============ SMALL UTILITIES ===============
 function parseLatLng(str) {
@@ -176,11 +58,13 @@ function parseLatLng(str) {
     ? [lat, lng]
     : null;
 }
+
 function showError(message) {
   errorMessage.textContent = message;
   errorMessage.classList.add("visible");
   setTimeout(() => errorMessage.classList.remove("visible"), 5000);
 }
+
 function formatDuration(seconds) {
   const minutes = Math.round(seconds / 60);
   if (minutes < 60) return `${minutes}m`;
@@ -188,6 +72,7 @@ function formatDuration(seconds) {
     mins = minutes % 60;
   return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
 }
+
 function addPin(lngLat, htmlLabel) {
   const el = document.createElement("div");
   el.className = "emoji-marker";
@@ -221,164 +106,11 @@ setupToggle(tollCard, tollToggle, "active");
 setupToggle(highwayCard, highwayToggle, "active");
 setupToggle(fastestCard, fastestToggle, "active-purple");
 
-// ========== FORECAST: JOIN SPEEDBANDS → ROADS =========
-function normName(s) {
-  return (s || "").toUpperCase().replace(/\s+/g, " ").trim();
-}
-
-// Apply worst band per road **by name** (fast POC)
-function applyBandsToRoads_ByName(speedRows) {
-  if (!roadsData) return;
-
-  // Collect "worst" (i.e., smallest) band per road name
-  const worstByName = new Map();
-  for (const r of speedRows) {
-    const name = normName(r.RoadName);
-    const b = Math.max(1, Math.min(8, Number(r.SpeedBand) || 0));
-    if (!name || !b) continue;
-    const curr = worstByName.get(name);
-    worstByName.set(name, curr ? Math.min(curr, b) : b);
-  }
-
-  // Write band onto features (property 'band')
-  for (const f of roadsData.features) {
-    const name = normName(f.properties.RD_CD_DESC);
-    f.properties.band = worstByName.get(name) ?? null;
-  }
-
-  // Push back + switch to forecast paint (gradient + width)
-  const src = map.getSource("roads");
-  if (src) src.setData(roadsData);
-  if (map.getLayer("roads-line")) {
-    map.setPaintProperty("roads-line", "line-color", forecastColorExpr);
-    map.setPaintProperty("roads-line", "line-width", [
-      "interpolate",
-      ["linear"],
-      ["zoom"],
-      10,
-      ["*", 0.9, forecastWidthExpr], // scale at low zoom
-      14,
-      forecastWidthExpr,
-    ]);
-    map.setPaintProperty("roads-line", "line-opacity", 0.98);
-  }
-  // slightly bump casing for clarity
-  if (map.getLayer("roads-case")) {
-    map.setPaintProperty("roads-case", "line-width", [
-      "interpolate",
-      ["linear"],
-      ["zoom"],
-      10,
-      2.0,
-      14,
-      4.0,
-    ]);
-  }
-}
-
-function resetRoadStyleToBase() {
-  if (!roadsDataOriginal || !map.getSource("roads")) return;
-  roadsData = JSON.parse(JSON.stringify(roadsDataOriginal)); // drop 'band'
-  map.getSource("roads").setData(roadsData);
-  if (map.getLayer("roads-line")) {
-    map.setPaintProperty("roads-line", "line-color", neutralRoadColorExpr);
-    map.setPaintProperty("roads-line", "line-width", [
-      "interpolate",
-      ["linear"],
-      ["zoom"],
-      10,
-      1.2,
-      14,
-      2.4,
-    ]);
-    map.setPaintProperty("roads-line", "line-opacity", 0.95);
-  }
-  if (map.getLayer("roads-case")) {
-    map.setPaintProperty("roads-case", "line-width", [
-      "interpolate",
-      ["linear"],
-      ["zoom"],
-      10,
-      1.6,
-      14,
-      3.2,
-    ]);
-  }
-}
-
-// Forecast UI
-forecastBtn.addEventListener("click", async () => {
-  showingForecast = !showingForecast;
-  forecastBtn.classList.toggle("active", showingForecast);
-  forecastControls.classList.toggle("visible", showingForecast);
-
-  // turn off carparks if forecast is on
-  if (showingForecast && showingCarparks) {
-    showingCarparks = false;
-    carparkBtn.classList.remove("active");
-    carparkOverlay.classList.remove("visible");
-    carparkMarkers.forEach((m) => m.remove());
-  }
-
-  if (showingForecast) {
-    try {
-      const resp = await fetch(`/speedbands?hour=${currentForecastHour}`);
-      if (!resp.ok) throw new Error("speedbands fetch failed");
-      const rows = (await resp.json()) || [];
-      applyBandsToRoads_ByName(rows);
-    } catch (e) {
-      console.warn("speedbands unavailable:", e);
-    }
-  } else {
-    resetRoadStyleToBase();
-  }
-});
-
-forecastSlider.addEventListener("input", async (e) => {
-  currentForecastHour = parseInt(e.target.value, 10);
-  const now = new Date();
-  const forecastDate = new Date(
-    now.getTime() + currentForecastHour * 3600 * 1000
-  );
-  forecastTime.textContent = forecastDate.toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  });
-  forecastOffset.textContent =
-    currentForecastHour === 0 ? "Now" : `+${currentForecastHour}h`;
-  if (showingForecast) {
-    try {
-      const resp = await fetch(`/speedbands?hour=${currentForecastHour}`);
-      if (resp.ok) applyBandsToRoads_ByName(await resp.json());
-    } catch (e) {
-      console.warn(e);
-    }
-  }
-});
-// init forecast display text
-(function () {
-  const now = new Date();
-  forecastTime.textContent = now.toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  });
-  forecastOffset.textContent = "Now";
-})();
-
 // ========== CARPARK TOGGLE ==========
 carparkBtn.addEventListener("click", () => {
   showingCarparks = !showingCarparks;
   carparkBtn.classList.toggle("active", showingCarparks);
   carparkOverlay.classList.toggle("visible", showingCarparks);
-
-  if (showingCarparks && showingForecast) {
-    showingForecast = false;
-    forecastBtn.classList.remove("active");
-    forecastControls.classList.remove("visible");
-    resetRoadStyleToBase();
-  }
 
   if (showingCarparks) {
     // Prefer last destination; otherwise request ALL
@@ -393,7 +125,7 @@ carparkBtn.addEventListener("click", () => {
   }
 });
 
-// ========== ROUTING (unchanged from your last) =========
+// ========== ROUTING ==========
 document.getElementById("routeForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   const originInput = document.getElementById("origin").value.trim();
@@ -425,11 +157,23 @@ document.getElementById("routeForm").addEventListener("submit", async (e) => {
     });
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || "Route calculation failed");
-    if (!data.overview_polyline) throw new Error("No route polyline returned");
 
-    const coords = polyline
-      .decode(data.overview_polyline)
-      .map(([lat, lng]) => [lng, lat]);
+    let coords;
+
+    // Mock mode (USE_LIVE_APIS=false on backend)
+    if (data.mode === "mock" && Array.isArray(data.polyline)) {
+      // data.polyline is [[lat, lng], [lat, lng], ...]
+      coords = data.polyline.map(([lat, lng]) => [lng, lat]);
+    } else {
+      // Live mode – must have encoded polyline string
+      if (!data.overview_polyline) {
+        throw new Error("No route polyline returned");
+      }
+
+      coords = polyline
+        .decode(data.overview_polyline)
+        .map(([lat, lng]) => [lng, lat]);
+    }
 
     if (map.getLayer("route-layer")) map.removeLayer("route-layer");
     if (map.getSource("route-source")) map.removeSource("route-source");
@@ -474,15 +218,13 @@ document.getElementById("routeForm").addEventListener("submit", async (e) => {
     lastDestCoords = endPt;
     fetchWeather({ lat: endPt[1], lon: endPt[0] });
 
-    // Show the "Open in Google Maps" button
     const googleMapsBtn = document.getElementById("googleMapsBtn");
     if (googleMapsBtn) {
-      googleMapsBtn.style.display = "inline-flex"; // show the button
+      googleMapsBtn.style.display = "inline-flex";
       googleMapsBtn.onclick = () => {
         const start = coords[0];
         const dest = coords[coords.length - 1];
 
-        // Detect iOS or Android and open appropriate map app
         let url;
         if (/iPhone|iPad|Macintosh/i.test(navigator.userAgent)) {
           url = `http://maps.apple.com/?saddr=${start[1]},${start[0]}&daddr=${dest[1]},${dest[0]}&dirflg=d`;
@@ -638,16 +380,14 @@ async function fetchCarparksNear(lat, lon, radiusKm = 1.0) {
         }
       }
 
-      // 🅿️ marker element (uses .custom-marker CSS)
       const el = document.createElement("div");
       el.className = "custom-marker";
       el.textContent = "🅿️";
 
-      // Popup (with ❌ button)
       const popup = new maplibregl.Popup({
         offset: 18,
-        closeButton: true, // ✅ show X button
-        closeOnClick: false, // we manage this manually
+        closeButton: true,
+        closeOnClick: false,
       }).setHTML(`
         <b>${cp.Development || "Carpark"}</b><br>
         Available: ${cp.AvailableLots ?? "—"}<br>
@@ -662,7 +402,6 @@ async function fetchCarparksNear(lat, lon, radiusKm = 1.0) {
         .addTo(map);
       carparkMarkers.push(marker);
 
-      // Marker click → open this popup, close others
       el.addEventListener("click", (e) => {
         e.stopPropagation();
         if (activeCarparkPopup && activeCarparkPopup !== popup) {
@@ -672,14 +411,12 @@ async function fetchCarparksNear(lat, lon, radiusKm = 1.0) {
         activeCarparkPopup = popup;
       });
 
-      // When user manually closes with ❌
       popup.on("close", () => {
         if (activeCarparkPopup === popup) {
           activeCarparkPopup = null;
         }
       });
 
-      // Sidebar list item
       const item = document.createElement("div");
       item.className = "carpark-item";
       item.innerHTML = `
@@ -748,6 +485,7 @@ async function fetchAIPrediction(originCoords, destCoords) {
     return null;
   }
 }
+
 function displayAIPredictions(prediction) {
   if (!prediction) return;
   let aiSection = document.getElementById("aiPredictions");
@@ -755,13 +493,15 @@ function displayAIPredictions(prediction) {
     aiSection = document.createElement("div");
     aiSection.id = "aiPredictions";
     aiSection.className = "route-info";
-    aiSection.innerHTML = `<div class="route-info-title">🤖 AI Traffic Predictions</div><div id="aiPredictionsContent"></div>`;
+    aiSection.innerHTML =
+      '<div class="route-info-title">🤖 AI Traffic Predictions</div><div id="aiPredictionsContent"></div>';
     routeInfo.parentNode.insertBefore(aiSection, routeInfo.nextSibling);
   }
 
   const content = document.getElementById("aiPredictionsContent");
   if (prediction.error) {
-    content.innerHTML = `<div style="color:#e53e3e;font-size:0.875rem;">⚠️ AI prediction temporarily unavailable</div>`;
+    content.innerHTML =
+      '<div style="color:#e53e3e;font-size:0.875rem;">⚠️ AI prediction temporarily unavailable</div>';
     return;
   }
 
@@ -813,6 +553,7 @@ function displayAIPredictions(prediction) {
   aiSection.classList.add("visible");
 }
 
-document.getElementById('predictionsBtn').addEventListener('click', () => {
-    window.location.href = '/predictions';
+// ========== PREDICTIONS PAGE BUTTON ==========
+document.getElementById("predictionsBtn").addEventListener("click", () => {
+  window.location.href = "/predictions";
 });
