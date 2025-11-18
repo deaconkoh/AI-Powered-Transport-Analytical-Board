@@ -289,6 +289,17 @@ body {
     100% { transform: rotate(360deg); }
 }
 
+/* Error/No Data States */
+.error-message {
+    text-align: center;
+    color: #ff6b6b;
+}
+
+.no-data-message {
+    text-align: center;
+    color: #ffa726;
+}
+
 /* Responsive Design */
 @media (max-width: 768px) {
     .predictions-header {
