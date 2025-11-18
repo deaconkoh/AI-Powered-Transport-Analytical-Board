@@ -2,7 +2,7 @@ class TrafficPredictions {
     constructor() {
         this.map = null;
         this.predictionData = null;
-        this.predictionData24h = null; // Store 24-hour predictions
+        this.predictionData24h = null;
         this.currentHour = 0;
         this.predictionLayers = [];
         this.init();
@@ -16,7 +16,7 @@ class TrafficPredictions {
     }
 
     async loadMap() {
-        // Initialize map
+        // Initialize map with better styling for traffic visualization
         this.map = new maplibregl.Map({
             container: 'map',
             style: {
@@ -37,12 +37,16 @@ class TrafficPredictions {
                     maxzoom: 19
                 }]
             },
-            center: [103.8198, 1.3521], // Singapore center
-            zoom: 11
+            center: [103.8198, 1.3521],
+            zoom: 11,
+            maxZoom: 18
         });
 
         // Wait for map to load
         await new Promise(resolve => this.map.on('load', resolve));
+        
+        // Add a subtle background color adjustment for better contrast
+        this.map.setPaintProperty('osm-tiles', 'raster-opacity', 0.8);
     }
 
     async loadPredictionData() {
@@ -52,7 +56,6 @@ class TrafficPredictions {
 
             console.log('🔄 Loading prediction data from API...');
             
-            // Load prediction data from backend
             const response = await fetch('/api/predictions');
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -61,20 +64,15 @@ class TrafficPredictions {
             const data = await response.json();
             console.log('📊 Raw API response:', data);
             
-            // Extract the predictions array from the response
             if (data.predictions && Array.isArray(data.predictions)) {
                 this.predictionData = data.predictions;
                 console.log(`✅ Loaded ${this.predictionData.length} predictions from 'predictions' array`);
-                
-                // Generate 24-hour predictions based on time patterns
                 this.generate24hPredictions();
             } else if (data.heatmap_data && Array.isArray(data.heatmap_data)) {
-                // Fallback for mock data structure
                 this.predictionData = data.heatmap_data;
                 console.log(`✅ Loaded ${this.predictionData.length} predictions from 'heatmap_data' array`);
                 this.generate24hPredictions();
             } else if (Array.isArray(data)) {
-                // If it's already an array, use it directly
                 this.predictionData = data;
                 console.log(`✅ Loaded ${this.predictionData.length} predictions from direct array`);
                 this.generate24hPredictions();
@@ -105,24 +103,17 @@ class TrafficPredictions {
         
         this.predictionData24h = [];
         
-        // Generate predictions for each hour (0-23)
         for (let hour = 0; hour < 24; hour++) {
             const hourPredictions = this.predictionData.map(segment => {
-                // Create a copy of the segment
                 const newSegment = {...segment};
                 
-                // Calculate time-based speed adjustment
                 const timeAdjustment = this.calculateTimeAdjustment(hour, newSegment);
                 
-                // Apply time-based adjustment to predicted speed
                 newSegment.predicted_speed = Math.max(5, Math.min(100, 
                     newSegment.predicted_speed * timeAdjustment
                 ));
                 
-                // Update traffic condition based on adjusted speed
                 newSegment.traffic_condition = this.getTrafficCondition(newSegment.predicted_speed);
-                
-                // Add hour information
                 newSegment.hour = hour;
                 newSegment.display_hour = hour === 0 ? 'Now' : `+${hour}h`;
                 
@@ -136,49 +127,40 @@ class TrafficPredictions {
     }
 
     calculateTimeAdjustment(hour, segment) {
-        // Base adjustment factors for different times of day
-        // These simulate typical traffic patterns
         let baseAdjustment = 1.0;
         
-        // Morning rush hour (7-9 AM)
         if (hour >= 7 && hour <= 9) {
-            baseAdjustment = 0.6; // Heavy traffic
+            baseAdjustment = 0.6;
         }
-        // Evening rush hour (5-7 PM)
         else if (hour >= 17 && hour <= 19) {
-            baseAdjustment = 0.7; // Heavy traffic
+            baseAdjustment = 0.7;
         }
-        // Lunch time (12-1 PM)
         else if (hour >= 12 && hour <= 13) {
-            baseAdjustment = 0.8; // Moderate traffic
+            baseAdjustment = 0.8;
         }
-        // Late night (10 PM - 5 AM)
         else if (hour >= 22 || hour <= 5) {
-            baseAdjustment = 1.4; // Light traffic
+            baseAdjustment = 1.4;
         }
-        // Mid-day (10 AM - 4 PM)
         else if (hour >= 10 && hour <= 16) {
-            baseAdjustment = 1.1; // Light traffic
+            baseAdjustment = 1.1;
         }
         
-        // Add some randomness and road-type specific adjustments
         const roadTypeFactor = this.getRoadTypeFactor(segment.road_category);
-        const randomFactor = 0.9 + (Math.random() * 0.2); // 0.9 to 1.1
+        const randomFactor = 0.9 + (Math.random() * 0.2);
         
         return baseAdjustment * roadTypeFactor * randomFactor;
     }
 
     getRoadTypeFactor(roadCategory) {
-        // Different road types have different traffic patterns
         switch (roadCategory?.toLowerCase()) {
             case 'expressway':
-                return 1.2; // Expressways handle traffic better
+                return 1.2;
             case 'highway':
                 return 1.3;
             case 'arterial':
                 return 1.0;
             case 'residential':
-                return 0.8; // Residential streets more sensitive to traffic
+                return 0.8;
             default:
                 return 1.0;
         }
@@ -250,7 +232,6 @@ class TrafficPredictions {
 
         // Create GeoJSON features from prediction data
         const features = currentData.map(segment => {
-            // Handle different field naming conventions
             const startLon = segment.start_lon || segment.StartLongitude || 103.8198;
             const startLat = segment.start_lat || segment.StartLatitude || 1.3521;
             const endLon = segment.end_lon || segment.EndLongitude || 103.8198;
@@ -288,6 +269,7 @@ class TrafficPredictions {
         // Add source and layer for predictions
         const sourceId = 'predictions-source';
         const layerId = 'predictions-layer';
+        const glowLayerId = 'predictions-glow';
 
         try {
             this.map.addSource(sourceId, {
@@ -298,6 +280,36 @@ class TrafficPredictions {
                 }
             });
 
+            // Add glow effect layer (wider, semi-transparent)
+            this.map.addLayer({
+                id: glowLayerId,
+                type: 'line',
+                source: sourceId,
+                paint: {
+                    'line-color': [
+                        'interpolate',
+                        ['linear'],
+                        ['get', 'predictedSpeed'],
+                        0, '#ff0000',
+                        20, '#ff4444',
+                        40, '#ffff00',
+                        60, '#00ff00',
+                        80, '#00cc00'
+                    ],
+                    'line-width': [
+                        'interpolate',
+                        ['linear'],
+                        ['zoom'],
+                        10, 12,
+                        15, 20,
+                        18, 30
+                    ],
+                    'line-opacity': 0.3,
+                    'line-blur': 1
+                }
+            });
+
+            // Add main prediction layer (thicker and more prominent)
             this.map.addLayer({
                 id: layerId,
                 type: 'line',
@@ -307,25 +319,26 @@ class TrafficPredictions {
                         'interpolate',
                         ['linear'],
                         ['get', 'predictedSpeed'],
-                        0, '#ff0000',    // Red for 0 km/h
-                        20, '#ff4444',   // Dark red for 20 km/h
-                        40, '#ffff00',   // Yellow for 40 km/h
-                        60, '#00ff00',   // Green for 60 km/h
-                        80, '#00cc00'    // Dark green for 80+ km/h
+                        0, '#ff0000',    // Bright red for congested
+                        20, '#ff6b35',   // Orange-red for slow
+                        40, '#ffd700',   // Gold for moderate
+                        60, '#90ee90',   // Light green for fluid
+                        80, '#008000'    // Dark green for very fluid
                     ],
                     'line-width': [
                         'interpolate',
                         ['linear'],
                         ['zoom'],
-                        10, 2,
-                        15, 4,
-                        18, 6
+                        10, 6,
+                        15, 12,
+                        18, 18
                     ],
-                    'line-opacity': 0.8
+                    'line-opacity': 0.9,
+                    'line-blur': 0.5
                 }
             });
 
-            this.predictionLayers.push(sourceId, layerId);
+            this.predictionLayers.push(sourceId, layerId, glowLayerId);
             console.log('✅ Prediction layers added to map');
 
             // Add click interaction
@@ -343,7 +356,11 @@ class TrafficPredictions {
                                 <div><strong>Predicted Speed:</strong> ${properties.predictedSpeed.toFixed(1)} km/h</div>
                                 <div><strong>Current Speed:</strong> ${properties.currentSpeed.toFixed(1)} km/h</div>
                                 <div><strong>Category:</strong> ${properties.roadCategory || 'N/A'}</div>
-                                <div><strong>Condition:</strong> ${properties.trafficCondition || 'N/A'}</div>
+                                <div><strong>Condition:</strong> <span style="color: ${
+                                    properties.trafficCondition === 'Congested' ? '#ff0000' :
+                                    properties.trafficCondition === 'Slow' ? '#ff6b35' :
+                                    properties.trafficCondition === 'Moderate' ? '#ffd700' : '#008000'
+                                }">${properties.trafficCondition || 'N/A'}</span></div>
                             </div>
                         </div>
                     `)
@@ -385,7 +402,7 @@ class TrafficPredictions {
 
         // Update current time
         this.updateCurrentTime();
-        setInterval(() => this.updateCurrentTime(), 60000); // Update every minute
+        setInterval(() => this.updateCurrentTime(), 60000);
     }
 
     updateMapForCurrentHour() {
@@ -515,35 +532,46 @@ document.addEventListener('DOMContentLoaded', () => {
     new TrafficPredictions();
 });
 
-// Add popup styles
+// Add enhanced popup styles
 const style = document.createElement('style');
 style.textContent = `
     .popup-content {
-        padding: 8px;
-        min-width: 200px;
+        padding: 12px;
+        min-width: 250px;
+        background: white;
+        border-radius: 8px;
     }
     
     .popup-content h3 {
-        margin: 0 0 8px 0;
+        margin: 0 0 10px 0;
         color: #333;
-        font-size: 14px;
-        border-bottom: 1px solid #eee;
-        padding-bottom: 4px;
+        font-size: 16px;
+        border-bottom: 2px solid #4fc3f7;
+        padding-bottom: 6px;
     }
     
     .popup-stats div {
-        margin: 4px 0;
-        font-size: 12px;
+        margin: 6px 0;
+        font-size: 13px;
         color: #666;
+        display: flex;
+        justify-content: space-between;
     }
     
     .popup-stats strong {
         color: #333;
+        font-weight: 600;
     }
     
     .maplibregl-popup-content {
-        border-radius: 8px;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        border-radius: 10px;
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+        border: 2px solid #4fc3f7;
+    }
+    
+    .maplibregl-popup-tip {
+        border-top-color: #4fc3f7 !important;
+        border-bottom-color: #4fc3f7 !important;
     }
 `;
 document.head.appendChild(style);
