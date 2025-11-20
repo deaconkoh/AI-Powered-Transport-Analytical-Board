@@ -302,3 +302,82 @@ resource "aws_iam_role_policy_attachment" "glue_s3_access_attach" {
   role       = aws_iam_role.glue_role.name
   policy_arn = aws_iam_policy.glue_s3_access.arn
 }
+
+# ==========================================
+# Permissions for MLOps (Glue Batch Job)
+# ==========================================
+
+# Allow Glue to read from the Models bucket and SSM
+resource "aws_iam_policy" "glue_mlops_policy" {
+  name = "${var.project_name}-glue-mlops-access"
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      # 1. Read Model Artifacts & Scripts from Models Bucket
+      {
+        Effect = "Allow",
+        Action = [
+          "s3:GetObject", 
+          "s3:ListBucket"
+        ],
+        Resource = [
+          aws_s3_bucket.models.arn,
+          "${aws_s3_bucket.models.arn}/*"
+        ]
+      },
+      # 2. Read the SSM Parameter to find the current model
+      {
+        Effect = "Allow",
+        Action = [
+          "ssm:GetParameter",
+          "ssm:GetParameters"
+        ],
+        Resource = "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter/traffic/hybrid/*"
+      }
+    ]
+  })
+}
+
+# Attach it to your existing Glue Role
+resource "aws_iam_role_policy_attachment" "glue_mlops_attach" {
+  role       = aws_iam_role.glue_role.name
+  policy_arn = aws_iam_policy.glue_mlops_policy.arn
+}
+
+# Policy for EC2 to access Athena
+resource "aws_iam_policy" "ec2_athena_access" {
+  name = "${var.project_name}-ec2-athena-access"
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect = "Allow",
+        Action = [
+          "athena:StartQueryExecution",
+          "athena:GetQueryExecution",
+          "athena:GetQueryResults",
+          "glue:GetTable",
+          "glue:GetPartitions",
+          "glue:GetDatabase"
+        ],
+        Resource = "*"
+      },
+      {
+        Effect = "Allow",
+        Action = ["s3:Get*", "s3:List*", "s3:PutObject"],
+        Resource = [
+          aws_s3_bucket.athena_results.arn,
+          "${aws_s3_bucket.athena_results.arn}/*",
+          aws_s3_bucket.raw.arn,
+          "${aws_s3_bucket.raw.arn}/*"
+        ]
+      }
+    ]
+  })
+}
+
+# Attach to your existing EC2 Role
+resource "aws_iam_role_policy_attachment" "ec2_athena_attach" {
+  role       = aws_iam_role.ec2_role.name
+  policy_arn = aws_iam_policy.ec2_athena_access.arn
+}

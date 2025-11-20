@@ -51,60 +51,11 @@ if SRC_DIR not in sys.path:
 from backend.data.lta_client import client as lta_client
 from backend.data.weather_client import get_weather_data
 from backend.data.google_direction import route_google
+from backend.data.athena_client import get_latest_predictions
 
-# Try to import hybrid predictor (with fallback)
-try:
-    from backend.prediction.hybrid_predictor import HybridProductionPredictor
-    HYBRID_PREDICTOR_AVAILABLE = True
-    print("✅ Hybrid predictor available")
-except ImportError as e:
-    print(f"❌ Hybrid predictor import failed: {e}")
-    HYBRID_PREDICTOR_AVAILABLE = False
-
-# Initialize hybrid predictor
-def initialize_hybrid_predictor():
-    """Initialize the hybrid LSTM+XGBoost predictor"""
-    if not HYBRID_PREDICTOR_AVAILABLE:
-        print("Hybrid predictor not available - skipping initialization")
-        return None
-    
-    try:
-        print("Initializing hybrid traffic prediction model...")
-        
-        current_dir = os.getcwd()
-        print(f"📁 Current directory: {current_dir}")
-        
-        # Try multiple possible model paths
-        possible_paths = [
-            "traffic_models_hybrid",
-            "traffic_models",
-            os.path.join("src", "backend", "models"),
-            os.path.join(BASE_DIR, "traffic_models_hybrid")
-        ]
-        
-        MODEL_SAVE_PATH = None
-        for path in possible_paths:
-            if os.path.exists(path):
-                MODEL_SAVE_PATH = path
-                print(f"✅ Found model directory: {path}")
-                break
-        
-        if not MODEL_SAVE_PATH:
-            print("❌ No model directory found in any expected location")
-            return None
-        
-        print(f"📁 Using model path: {os.path.abspath(MODEL_SAVE_PATH)}")
-        
-        predictor = HybridProductionPredictor(model_save_path=MODEL_SAVE_PATH)
-        print("✅ Hybrid predictor initialized successfully")
-        return predictor
-    except Exception as e:
-        print(f"❌ Failed to initialize hybrid predictor: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
-
-hybrid_predictor = initialize_hybrid_predictor()
+ATHENA_RESULTS_BUCKET = os.getenv("ATHENA_RESULTS_BUCKET") 
+if ATHENA_RESULTS_BUCKET:
+    os.environ['ATHENA_OUTPUT_LOCATION'] = f"s3://{ATHENA_RESULTS_BUCKET}/queries/"
 
 app = Flask(
     __name__,
@@ -115,21 +66,17 @@ app = Flask(
 # ---------- health ----------
 @app.get("/health")
 def health():
-    hybrid_loaded = hybrid_predictor is not None
-    
-    return jsonify(
-        ok=True,
-        hybrid_predictor_loaded=hybrid_loaded,
-        message="Hybrid predictor loaded" if hybrid_loaded else "Hybrid predictor not available",
-    ), 200
+    return jsonify(ok=True, mode="Big Data / Athena"), 200
 
 @app.get("/healthz")
 def healthz():
+    # Detailed configuration check
     return jsonify({
         "ok": True,
         "use_live_apis": USE_LIVE_APIS,
         "use_sm": USE_SM,
-        "hybrid_predictor_available": hybrid_predictor is not None
+        "mode": "Serverless SQL (Athena)",
+        "athena_bucket_configured": bool(os.environ.get('ATHENA_OUTPUT_LOCATION'))
     })
 
 # ---------- basic pages ----------
@@ -160,35 +107,28 @@ def predictions():
 
 @app.route('/api/predictions')
 def api_predictions():
-    """Serve prediction data from the hybrid model using parquet data"""
+    """Serve prediction data via Athena (Serverless SQL)"""
     try:
-        if hybrid_predictor is None:
-            return jsonify({
-                "success": False,
-                "error": "Hybrid predictor not available",
-                "predictions": []
-            }), 503
+        print("🔎 Querying Athena for latest batch predictions...")
+        data = get_latest_predictions(limit=500)
         
-        results = hybrid_predictor.run_prediction_pipeline()
-        
-        if results.get("success"):
-            return jsonify(results)
+        if data:
+             return jsonify({
+                "success": True,
+                "source": "AWS Athena (Parquet)",
+                "predictions": data,
+                "count": len(data)
+            })
         else:
-            return jsonify({
+             return jsonify({
                 "success": False,
-                "error": results.get("error", "Prediction failed"),
+                "error": "No data returned from Athena",
                 "predictions": []
-            }), 500
-            
+            }), 404
+
     except Exception as e:
         print(f"❌ Error in /api/predictions: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({
-            "success": False,
-            "error": "Internal server error",
-            "predictions": []
-        }), 500
+        return jsonify({"success": False, "error": str(e)}), 500
 
 # ---------- routing (Google Directions) ----------
 @app.post("/route")
@@ -235,18 +175,27 @@ def route():
             waypoints_processed.append(wp_processed)
 
     if not USE_LIVE_APIS:
-        mock_polyline = None
+        # If coordinates were provided, use them. Otherwise, generate a dummy line.
         if isinstance(origin_processed, tuple) and isinstance(dest_processed, tuple):
-            mock_polyline = [
+            points = [
                 [origin_processed[0], origin_processed[1]],
                 [dest_processed[0], dest_processed[1]],
+            ]
+        else:
+            # Fallback mock points if addresses were used
+            points = [
+                [1.3521, 103.8198],
+                [1.3621, 103.8298],
             ]
 
         return jsonify({
             "mode": "mock",
+            # Match what your frontend expects as closely as possible:
+            "overview_polyline": {
+                "points": points
+            },
             "origin": origin_processed,
             "destination": dest_processed,
-            "polyline": mock_polyline,
             "distance_km": 5.4,
             "eta_seconds": 12 * 60,
             "note": "Mock routing enabled because USE_LIVE_APIS=false"

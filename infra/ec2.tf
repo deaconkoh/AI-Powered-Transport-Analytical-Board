@@ -106,9 +106,10 @@ resource "aws_instance" "traffic_ec2" {
       --query SecretString --output text | jq -r '.key')"
 
     docker run -d --name traffic-ai -p 8080:8080 --restart unless-stopped \
-      -e USE_LIVE_APIS=false \
+      -e USE_LIVE_APIS=true \
       -e USE_SM=true \
       -e RAW_BUCKET="${aws_s3_bucket.raw.bucket}" \
+      -e ATHENA_RESULTS_BUCKET="${aws_s3_bucket.athena_results.bucket}" \
       -e AWS_REGION="$REGION" \
       -e AWS_DEFAULT_REGION="$REGION" \
       -e SM_ENDPOINT="${aws_sagemaker_endpoint.serverless.name}" \

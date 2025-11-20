@@ -25,12 +25,11 @@ def lambda_handler(event, context):
     headers = {"AccountKey": key}
     base = "https://datamall2.mytransport.sg/ltaodataservice"
 
-    # use one timestamp for this whole snapshot
     ts = time.strftime("%Y%m%d-%H%M%S")
 
-    #########################
+    ##################################
     # Carpark availability
-    #########################
+    ##################################
     cp_url = f"{base}/CarParkAvailabilityv2"
     carparks = http_get(cp_url, headers)
 
@@ -48,29 +47,31 @@ def lambda_handler(event, context):
         ContentType="application/json",
     )
 
-    #########################
-    # Traffic Speed Bands (Bronze for Big Data)
-    #########################
-    # TrafficSpeedBands is paginated: up to 500 records per call, use $skip
+    ##################################
+    # Traffic Speed Bands (v4)
+    ##################################
     speed_rows = []
     skip = 0
     PAGE_SIZE = 500
-    MAX_PAGES = 40  # safety cap
+    SAFETY_LIMIT = 2000  # allows up to 1 million rows
 
     while True:
         sb_url = f"{base}/v4/TrafficSpeedBands?$skip={skip}"
         page = http_get(sb_url, headers)
         batch = page.get("value", [])
+
         if not batch:
-            break
+            break  # no more pages
 
         speed_rows.extend(batch)
 
-        # stop if less than a full page or we hit safety cap
-        if len(batch) < PAGE_SIZE or skip >= PAGE_SIZE * MAX_PAGES:
-            break
-
+        # Continue pagination
         skip += PAGE_SIZE
+
+        # Prevent infinite loops if API misbehaves
+        if skip > PAGE_SIZE * SAFETY_LIMIT:
+            print("WARNING: Safety limit reached, stopping pagination.")
+            break
 
     speedband_payload = {
         "fetched_at": ts,

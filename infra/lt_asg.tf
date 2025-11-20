@@ -41,9 +41,10 @@ resource "aws_launch_template" "api_lt" {
       --query SecretString --output text | jq -r '.key')"
 
     docker run -d --name traffic-ai -p 8080:8080 --restart unless-stopped \
-      -e USE_LIVE_APIS=false \
+      -e USE_LIVE_APIS=true \
       -e USE_SM=true \
       -e RAW_BUCKET="${aws_s3_bucket.raw.bucket}" \
+      -e ATHENA_RESULTS_BUCKET="${aws_s3_bucket.athena_results.bucket}" \
       -e AWS_REGION="$REGION" \
       -e AWS_DEFAULT_REGION="$REGION" \
       -e SM_ENDPOINT="${aws_sagemaker_endpoint.serverless.name}" \
@@ -60,7 +61,7 @@ resource "aws_autoscaling_group" "api_asg" {
   desired_capacity          = var.asg_desired_capacity
   vpc_zone_identifier       = [aws_subnet.private_a.id, aws_subnet.private_b.id]
   health_check_type         = "ELB"
-  health_check_grace_period = 300
+  health_check_grace_period = 600
 
   launch_template {
     id      = aws_launch_template.api_lt.id

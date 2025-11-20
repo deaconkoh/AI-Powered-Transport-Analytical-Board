@@ -160,19 +160,48 @@ document.getElementById("routeForm").addEventListener("submit", async (e) => {
 
     let coords;
 
-    // Mock mode (USE_LIVE_APIS=false on backend)
-    if (data.mode === "mock" && Array.isArray(data.polyline)) {
-      // data.polyline is [[lat, lng], [lat, lng], ...]
-      coords = data.polyline.map(([lat, lng]) => [lng, lat]);
+    if (data.mode === "mock") {
+      // Mock mode: backend returns { overview_polyline: { points: [[lat, lng], ...] } }
+      const pts = data.overview_polyline?.points;
+      if (!Array.isArray(pts) || pts.length === 0) {
+        throw new Error("Mock route has no points");
+      }
+
+      // Convert [lat, lng] -> [lng, lat] for MapLibre
+      coords = pts.map(([lat, lng]) => [lng, lat]);
     } else {
-      // Live mode – must have encoded polyline string
-      if (!data.overview_polyline) {
+      // Live mode – overview_polyline might be a string or { points: "encoded" }
+      let encoded = null;
+
+      if (typeof data.overview_polyline === "string") {
+        encoded = data.overview_polyline;
+      } else if (
+        data.overview_polyline &&
+        typeof data.overview_polyline.points === "string"
+      ) {
+        encoded = data.overview_polyline.points;
+      }
+
+      if (!encoded) {
         throw new Error("No route polyline returned");
       }
 
-      coords = polyline
-        .decode(data.overview_polyline)
-        .map(([lat, lng]) => [lng, lat]);
+      coords = polyline.decode(encoded).map(([lat, lng]) => [lng, lat]);
+    }
+
+    // Safety check (optional but nice)
+    if (
+      !Array.isArray(coords) ||
+      coords.length === 0 ||
+      !coords.every(
+        (c) =>
+          Array.isArray(c) &&
+          c.length === 2 &&
+          Number.isFinite(c[0]) &&
+          Number.isFinite(c[1])
+      )
+    ) {
+      throw new Error("Invalid coordinates returned from route API");
     }
 
     if (map.getLayer("route-layer")) map.removeLayer("route-layer");
@@ -194,10 +223,9 @@ document.getElementById("routeForm").addEventListener("submit", async (e) => {
       paint: { "line-color": "#667eea", "line-width": 5, "line-opacity": 0.8 },
     });
 
-    const startLL = Array.isArray(origin) ? [origin[1], origin[0]] : coords[0];
-    const endLL = Array.isArray(dest)
-      ? [dest[1], dest[0]]
-      : coords[coords.length - 1];
+    const startLL = coords[0]; // [lng, lat]
+    const endLL = coords[coords.length - 1]; // [lng, lat]
+
     originMarker = addPin(startLL, "<b>📍 Start</b>");
     destMarker = addPin(endLL, "<b>📍 Destination</b>");
 

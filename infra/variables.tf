@@ -89,15 +89,15 @@ variable "enable_single_ec2" {
 
 variable "asg_min_size" {
   type    = number
-  default = 2
+  default = 1
 }
 variable "asg_max_size" {
   type    = number
-  default = 6
+  default = 1
 }
 variable "asg_desired_capacity" {
   type    = number
-  default = 2
+  default = 1
 }
 
 output "waf_log_group_name" {
@@ -114,4 +114,22 @@ variable "enable_private_networking" {
   type        = bool
   description = "Create private subnets, NAT, and VPC endpoints"
   default     = false
+}
+
+# Path to the local training code bundle
+variable "hybrid_training_code_path" {
+  description = "Local path to hybrid training code tar.gz"
+  type        = string
+  default     = "../sm_model/hybrid-training.tar.gz"
+}
+
+variable "pytorch_training_image_uri" {
+  type    = string
+  default = "763104351884.dkr.ecr.us-east-1.amazonaws.com/pytorch-training:2.2.0-cpu-py310-ubuntu20.04"
+}
+
+variable "raw_bucket" {
+  description = "Name of the raw data bucket (where gold/speedbands/ lives)"
+  type        = string
+  default     = "traffic-ai-raw-754029048130-us-east-1"
 }
