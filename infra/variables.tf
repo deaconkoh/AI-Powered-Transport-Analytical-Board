@@ -62,13 +62,13 @@ variable "raw_bucket_name" {
 
 variable "enable_ingestion" {
   type        = bool
-  default     = false
+  default     = true
   description = "Attach EventBridge targets to Lambda (on/off)."
 }
 
 variable "enable_glue" {
   type        = bool
-  default     = false
+  default     = true
   description = "Enable or disable Glue scheduled ETL trigger."
 }
 
@@ -89,15 +89,15 @@ variable "enable_single_ec2" {
 
 variable "asg_min_size" {
   type    = number
-  default = 1
+  default = 2
 }
 variable "asg_max_size" {
   type    = number
-  default = 1
+  default = 6
 }
 variable "asg_desired_capacity" {
   type    = number
-  default = 1
+  default = 2
 }
 
 output "waf_log_group_name" {
@@ -132,4 +132,11 @@ variable "raw_bucket" {
   description = "Name of the raw data bucket (where gold/speedbands/ lives)"
   type        = string
   default     = "traffic-ai-raw-754029048130-us-east-1"
+}
+
+
+variable "USE_MOCK_PREDICTIONS" {
+  description = "Switch between Athena (Real) and Mock (Simulation) based on config"
+  type        = string
+  default     = "false"
 }

@@ -175,9 +175,6 @@ resource "aws_iam_role_policy_attachment" "secrets_read_attach" {
   policy_arn = aws_iam_policy.secrets_read.arn
 }
 
-# --- ADD TO infra/lambda.tf ---
-
-# 1. Zip the Python Code
 data "archive_file" "registry_zip" {
   type        = "zip"
   source_file = "${path.module}/../src/backend/ops/register_model.py" 

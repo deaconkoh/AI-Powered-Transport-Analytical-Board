@@ -7,33 +7,32 @@ DATABASE = 'traffic_ai_db'
 TABLE = 'hybrid'
 REGION = 'us-east-1'
 
-def get_latest_predictions(limit=2000): # Increased limit to cover more roads
-    """
-    Queries Athena to get the latest traffic predictions.
-    """
+def get_latest_predictions(limit=2000):
     client = boto3.client('athena', region_name=REGION)
-    
-    # Get output location from Env Var
     output_location = os.environ.get('ATHENA_OUTPUT_LOCATION')
     
     if not output_location:
-        print("❌ ATHENA_OUTPUT_LOCATION not set in environment variables")
+        print("❌ ATHENA_OUTPUT_LOCATION not set")
         return []
-
-    # --- THE FIX: SIMPLIFIED SQL ---
-    # 1. Removed 'WHERE > now()' to prevent timezone issues returning 0 rows.
-    # 2. Added casting to ensure numbers are returned as floats/strings correctly.
+    
+    # CORRECTED SQL: No Joins, using YOUR column names
     query = f"""
-    SELECT linkid, predictiontime, predictedspeed, startlatitude, startlongitude, endlatitude, endlongitude
+    SELECT 
+        linkid, 
+        predictiontime, 
+        predictedspeed, 
+        startlatitude, 
+        startlongitude, 
+        endlatitude, 
+        endlongitude
     FROM "{DATABASE}"."{TABLE}"
-    ORDER BY predictiontime DESC
+    ORDER BY predictiontime ASC
     LIMIT {limit}
     """
     
     print(f"🚀 Running Query: {query}")
 
     try:
-        # 1. Start Query
         response = client.start_query_execution(
             QueryString=query,
             QueryExecutionContext={'Database': DATABASE},
@@ -41,7 +40,7 @@ def get_latest_predictions(limit=2000): # Increased limit to cover more roads
         )
         query_execution_id = response['QueryExecutionId']
 
-        # 2. Wait for results
+        # Wait for results
         while True:
             stats = client.get_query_execution(QueryExecutionId=query_execution_id)
             status = stats['QueryExecution']['Status']['State']
@@ -50,33 +49,59 @@ def get_latest_predictions(limit=2000): # Increased limit to cover more roads
             time.sleep(0.5) 
             
         if status == 'SUCCEEDED':
-            # 3. Fetch Results
             results = client.get_query_results(QueryExecutionId=query_execution_id)
-            
-            # 4. Parse Results
             rows = []
-            # Skip header row [0]
+            
+            # Skip header [0]
             for row in results['ResultSet']['Rows'][1:]:
-                data = row['Data']
+                d = row['Data']
                 try:
+                    
+                    speed = float(d[2].get('VarCharValue', 0))
+                    link_id = d[0].get('VarCharValue')
+                    
+                    # --- CALCULATE COLOR & STATUS ---
+                    if speed >= 60:
+                        color = "#00FF00" # Green
+                        status = "Fluid"
+                    elif speed >= 30:
+                        color = "#FFA500" # Orange
+                        status = "Moderate"
+                    else:
+                        color = "#FF0000" # Red
+                        status = "Congested"
+
                     rows.append({
-                        "link_id": data[0].get('VarCharValue'),
-                        "time": data[1].get('VarCharValue'),
-                        "speed": float(data[2].get('VarCharValue', 0)),
-                        # Map new columns
-                        "start_lat": float(data[3].get('VarCharValue', 0)),
-                        "start_lon": float(data[4].get('VarCharValue', 0)),
-                        "end_lat": float(data[5].get('VarCharValue', 0)),
-                        "end_lon": float(data[6].get('VarCharValue', 0))
+                        # Front-end expects 'link_id', DB gives 'linkid'
+                        "link_id": link_id,
+                        
+                        # Front-end expects 'time', DB gives 'predictiontime'
+                        "time": d[1].get('VarCharValue'),
+                        
+                        # Front-end expects 'speed', DB gives 'predictedspeed'
+                        "speed": speed,
+                        
+                        # Front-end expects 'start_lat', DB gives 'startlatitude'
+                        "start_lat": float(d[3].get('VarCharValue', 0)),
+                        "start_lon": float(d[4].get('VarCharValue', 0)),
+                        "end_lat": float(d[5].get('VarCharValue', 0)),
+                        "end_lon": float(d[6].get('VarCharValue', 0)),
+                        
+                        # DB doesn't have road name, so we make one up or use ID
+                        "road_name": f"Road {link_id}", 
+                        
+                        # Computed fields
+                        "color": color,
+                        "status": status,
+                        "hub": "Unknown" 
                     })
-                except (ValueError, IndexError):
+                except (ValueError, IndexError) as e:
                     continue
                     
-            print(f"✅ Athena returned {len(rows)} rows")
+            print(f"✅ Athena returned {len(rows)} formatted rows")
             return rows
         else:
-            reason = stats['QueryExecution']['Status'].get('StateChangeReason', 'Unknown')
-            print(f"❌ Query failed: {reason}")
+            print(f"❌ Query failed: {stats['QueryExecution']['Status'].get('StateChangeReason')}")
             return []
 
     except Exception as e:

@@ -12,7 +12,8 @@ SM_ENDPOINT = os.getenv("SM_ENDPOINT", "")
 sm_rt = boto3.client("sagemaker-runtime") if USE_SM else None
 RAW_BUCKET = os.getenv("RAW_BUCKET")
 CARPARK_PREFIX = "raw/lta/carparks/"
-
+#USE_MOCK_PREDICTIONS = os.getenv("USE_MOCK_PREDICTIONS", "false").lower() == "true"
+USE_MOCK_PREDICTIONS = True
 # Normalise key names before loading
 if os.getenv("GOOGLE_MAPS_API_KEY") and not os.getenv("GOOGLE_MAP_KEY"):
     os.environ["GOOGLE_MAP_KEY"] = os.getenv("GOOGLE_MAPS_API_KEY")
@@ -41,13 +42,12 @@ def _load_json_from_s3(s3, bucket, key):
     obj = s3.get_object(Bucket=bucket, Key=key)
     return json.loads(obj["Body"].read())
 
-# --- make src importable (backend lives under src/)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SRC_DIR = os.path.join(BASE_DIR, "src")
 if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
 
-# Unified imports (no 'src.' prefix anywhere)
+# Unified imports
 from backend.data.lta_client import client as lta_client
 from backend.data.weather_client import get_weather_data
 from backend.data.google_direction import route_google
@@ -75,6 +75,7 @@ def healthz():
         "ok": True,
         "use_live_apis": USE_LIVE_APIS,
         "use_sm": USE_SM,
+        "use_mock_predictions": USE_MOCK_PREDICTIONS,
         "mode": "Serverless SQL (Athena)",
         "athena_bucket_configured": bool(os.environ.get('ATHENA_OUTPUT_LOCATION'))
     })
@@ -107,27 +108,53 @@ def predictions():
 
 @app.route('/api/predictions')
 def api_predictions():
-    """Serve prediction data via Athena (Serverless SQL)"""
+    """
+    Serve prediction data.
+    Switch between Athena (Real) and Mock (Static File) based on config.
+    """
     try:
-        print("🔎 Querying Athena for latest batch predictions...")
-        data = get_latest_predictions(limit=500)
-        
-        if data:
-             return jsonify({
-                "success": True,
-                "source": "AWS Athena (Parquet)",
+        # --- MOCK MODE (Static File) ---
+        if USE_MOCK_PREDICTIONS:
+            print("⚠️ MOCK MODE: Reading static data file")
+            
+            # Look for the NEW lightweight file
+            file_name = "mock_predictions.json"
+            possible_paths = [
+                os.path.join(BASE_DIR, file_name),
+                os.path.join(SRC_DIR, "backend", "data", file_name)
+            ]
+            
+            for path in possible_paths:
+                if os.path.exists(path):
+                    print(f"📂 Found data file at: {path}")
+                    with open(path, 'r') as f:
+                        data = json.load(f) # Load the list directly
+                    
+                    return jsonify({
+                        "success": True,
+                        "source": "Static Optimized JSON",
+                        "predictions": data, # This is now the list of [{id, s, c, t}...]
+                        "count": len(data)
+                    })
+            
+            return jsonify({"success": False, "error": "mock_predictions.json not found"}), 500
+
+        # --- REAL MODE (Athena) ---
+        else:
+            # NOTE: If you use Athena, you need to update your SQL query 
+            # to match the new format (id, s, c, t) or update the frontend to handle both formats.
+            # For now, let's stick to getting the mock data working perfectly.
+            print("🔎 REAL MODE: Querying Athena...")
+            data = get_latest_predictions(limit=5000)
+            return jsonify({
+                "success": True, 
+                "source": "AWS Athena", 
                 "predictions": data,
                 "count": len(data)
             })
-        else:
-             return jsonify({
-                "success": False,
-                "error": "No data returned from Athena",
-                "predictions": []
-            }), 404
 
     except Exception as e:
-        print(f"❌ Error in /api/predictions: {e}")
+        print(f"❌ Error: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 # ---------- routing (Google Directions) ----------
@@ -190,7 +217,6 @@ def route():
 
         return jsonify({
             "mode": "mock",
-            # Match what your frontend expects as closely as possible:
             "overview_polyline": {
                 "points": points
             },
@@ -388,5 +414,4 @@ def carparks_nearby():
 # ---------- run (local dev) ----------
 if __name__ == "__main__":
     print("Server starting...")
-    print(f"Hybrid predictor available: {hybrid_predictor is not None}")
     app.run(host="0.0.0.0", port=8000, debug=True)

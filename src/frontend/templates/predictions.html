@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
+  <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Traffic-AI: Traffic Predictions</title>
@@ -10,106 +10,110 @@
     />
     <link rel="stylesheet" href="../static/css/predictions.css" />
     <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
-</head>
-<body>
+  </head>
+  <body>
     <div class="predictions-container">
-        <!-- Header Bar -->
-        <div class="predictions-header">
-            <div class="header-left">
-                <div class="logo">
-                    <div class="logo-icon">🧭</div>
-                    <div class="logo-text">Traffic Predictions</div>
-                </div>
-                <button class="back-btn" id="backBtn">
-                    <span>←</span>
-                    Back to Main
-                </button>
+      <!-- Header Bar -->
+      <div class="predictions-header">
+        <div class="header-left">
+          <div class="logo">
+            <div class="logo-icon">🧭</div>
+            <div class="logo-text">Traffic Predictions</div>
+          </div>
+          <button class="back-btn" id="backBtn">
+            <span>←</span>
+            Back to Main
+          </button>
+        </div>
+        <div class="header-center">
+          <div class="time-display">
+            <div class="current-time" id="currentTime">Loading...</div>
+            <div class="prediction-time" id="predictionTime">Now</div>
+          </div>
+        </div>
+        <div class="header-right">
+          <div class="prediction-stats">
+            <div class="stat">
+              <span class="stat-label">Road Segments:</span>
+              <span class="stat-value" id="segmentCount">0</span>
             </div>
-            <div class="header-center">
-                <div class="time-display">
-                    <div class="current-time" id="currentTime">Loading...</div>
-                    <div class="prediction-time" id="predictionTime">Now</div>
-                </div>
+            <div class="stat">
+              <span class="stat-label">Avg Speed:</span>
+              <span class="stat-value" id="avgSpeed">0 km/h</span>
             </div>
-            <div class="header-right">
-                <div class="prediction-stats">
-                    <div class="stat">
-                        <span class="stat-label">Road Segments:</span>
-                        <span class="stat-value" id="segmentCount">0</span>
-                    </div>
-                    <div class="stat">
-                        <span class="stat-label">Avg Speed:</span>
-                        <span class="stat-value" id="avgSpeed">0 km/h</span>
-                    </div>
-                </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Map Container -->
+      <div class="predictions-map" id="map"></div>
+
+      <!-- Prediction Controls -->
+      <div class="prediction-controls" id="predictionControls">
+        <div class="control-header" id="controlHeader">
+          <div class="header-text-group">
+            <div class="control-title">
+              <span>🌡️</span>
+              <span>24-Hour Prediction</span>
             </div>
+            <div class="control-subtitle">Drag slider to simulate future</div>
+          </div>
+
+          <button class="toggle-btn" id="toggleControlsBtn">▼</button>
         </div>
 
-        <!-- Map Container -->
-        <div class="predictions-map" id="map"></div>
-
-        <!-- Prediction Controls -->
-        <div class="prediction-controls">
-            <div class="control-header">
-                <div class="control-title">
-                    <span>🌡️</span>
-                    <span>24-Hour Traffic Prediction</span>
-                </div>
-                <div class="control-subtitle">Drag slider to see predicted traffic conditions</div>
-            </div>
-
-            <div class="time-slider-container">
-                <div class="time-labels">
-                    <span class="time-label">Now</span>
-                    <span class="time-label" id="sliderTime">+0h</span>
-                    <span class="time-label">+24h</span>
-                </div>
-                <input
-                    type="range"
-                    min="0"
-                    max="24"
-                    value="0"
-                    step="1"
-                    class="prediction-slider"
-                    id="predictionSlider"
-                />
-                <div class="slider-marks">
-                    <span>0h</span>
-                    <span>6h</span>
-                    <span>12h</span>
-                    <span>18h</span>
-                    <span>24h</span>
-                </div>
-            </div>
-
-            <div class="legend-container">
-                <div class="legend-title">Traffic Speed (km/h)</div>
-                <div class="speed-legend">
-                    <div class="legend-item">
-                        <div class="legend-color" style="background-color: #00ff00;"></div>
-                        <span>Fast (>60)</span>
-                    </div>
-                    <div class="legend-item">
-                        <div class="legend-color" style="background-color: #ffff00;"></div>
-                        <span>Moderate (30-60)</span>
-                    </div>
-                    <div class="legend-item">
-                        <div class="legend-color" style="background-color: #ff0000;"></div>
-                        <span>Slow (<30)</span>
-                    </div>
-                </div>
-            </div>
+        <div class="time-slider-container">
+          <div class="time-labels">
+            <span class="time-label">Now</span>
+            <span class="time-label" id="sliderTime">+0h</span>
+            <span class="time-label">+24h</span>
+          </div>
+          <input
+            type="range"
+            min="0"
+            max="24"
+            value="0"
+            step="1"
+            class="prediction-slider"
+            id="predictionSlider"
+          />
+          <div class="slider-marks">
+            <span>0h</span>
+            <span>6h</span>
+            <span>12h</span>
+            <span>18h</span>
+            <span>24h</span>
+          </div>
         </div>
 
-        <!-- Loading Overlay -->
-        <div class="loading-overlay" id="loadingOverlay">
-            <div class="loading-spinner"></div>
-            <div class="loading-text">Loading prediction data...</div>
+        <div class="legend-container">
+          <div class="legend-title">Traffic Speed (km/h)</div>
+          <div class="speed-legend">
+            <div class="legend-item">
+              <div class="legend-color" style="background-color: #00ff00"></div>
+              <span>Fast (>60)</span>
+            </div>
+            <div class="legend-item">
+              <div class="legend-color" style="background-color: #ffff00"></div>
+              <span>Moderate (30-60)</span>
+            </div>
+            <div class="legend-item">
+              <div class="legend-color" style="background-color: #ff0000"></div>
+              <span>Slow (<30)</span>
+            </div>
+          </div>
         </div>
+      </div>
+
+      <!-- Loading Overlay -->
+      <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-spinner"></div>
+        <div class="loading-text">Loading prediction data...</div>
+      </div>
     </div>
 
     <script src="https://unpkg.com/@mapbox/polyline"></script>
     <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
     <script src="../static/js/predictions.js"></script>
-</body>
+  </body>
 </html>

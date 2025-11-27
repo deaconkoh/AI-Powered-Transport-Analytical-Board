@@ -44,6 +44,7 @@ resource "aws_launch_template" "api_lt" {
       -e USE_LIVE_APIS=true \
       -e USE_SM=true \
       -e RAW_BUCKET="${aws_s3_bucket.raw.bucket}" \
+      -e USE_MOCK_PREDICTIONS="${var.USE_MOCK_PREDICTIONS}" \
       -e ATHENA_RESULTS_BUCKET="${aws_s3_bucket.athena_results.bucket}" \
       -e AWS_REGION="$REGION" \
       -e AWS_DEFAULT_REGION="$REGION" \
