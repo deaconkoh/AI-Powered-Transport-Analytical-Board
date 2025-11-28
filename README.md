@@ -27,7 +27,7 @@ This project implements a **Hybrid Inference Architecture** leveraging AWS Glue,
 <br /><br />
 
 <p align="center">
-  <a href="INF2006_Group15_Final_Report.pdf" style="font-size:18px;">
+  <a href="/docs/INF2006_Group15_Final_Report.pdf" style="font-size:18px;">
     <em>📄 View Project Report</em>
   </a>
 </p>
