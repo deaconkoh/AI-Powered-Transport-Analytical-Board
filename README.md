@@ -63,7 +63,7 @@ The platform utilizes a **Hybrid Inference Strategy**, allocating compute resour
 
 | Use Case                   | Model Architecture        | Role                                                                                                  | Inference Type                     |
 | :------------------------- | :------------------------ | :---------------------------------------------------------------------------------------------------- | :--------------------------------- |
-| **Point-to-Point Routing** | **STGCN / Graph WaveNet** | Captures complex spatial dependencies between road segments to predict route-specific delays.         | **Real-Time** (SageMaker Endpoint) |
+| **Point-to-Point Routing** | **STGCN / Graph WaveNet / Custom STGNN** | Captures complex spatial dependencies between road segments to predict route-specific delays.         | **Real-Time** (SageMaker Endpoint) |
 | **City-Scale Forecasting** | **LSTM / XGBoost**        | Efficiently processes temporal patterns for 15,000+ roads simultaneously to generate the 24h heatmap. | **Batch** (Glue Spark Job)         |
 
 ---
