@@ -15,12 +15,9 @@ This project implements a **Hybrid Inference Architecture** leveraging AWS Glue,
 
 ---
 <div align="center">
-
-### 🚦 Live Project Preview
-
 <img src="/docs/demo.gif" width="80%" style="border-radius:10px"/>
-
 </div>
+
 ---
 ## 1. System Architecture & Design
 
