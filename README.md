@@ -15,7 +15,47 @@ This project implements a **Hybrid Inference Architecture** leveraging AWS Glue,
 
 ---
 
-## 1. Prerequisites & Configuration
+## 1. System Architecture & Design
+
+Traffic-AI is built on a modular, event-driven architecture designed for high availability, security, and automated scaling.
+
+### 1.1 Cloud Infrastructure (AWS)
+
+Following a Service-Oriented Architecture, the application layer (Flask) is decoupled from the compute-intensive inference layer (SageMaker) and the data processing layer (Glue), ensuring that user-facing latency remains low even during heavy batch processing.
+
+![Cloud Architecture Diagram](/docs/cloud-architecture.png)
+_(Figure 1: High-Level AWS Architecture showing VPC isolation and PrivateLink connectivity)_
+
+### 1.2 Big Data & ETL Pipeline
+
+We implement a **Medallion Architecture** (Bronze/Silver/Gold) to process ~41 million daily records.
+
+- **Ingestion:** Serverless Lambda functions fetch data every 5 minutes.
+- **Processing:** AWS Glue (Spark) handles heavy transformations and Parquet conversion.
+- **Serving:** AWS Athena provides a serverless SQL interface for city-scale queries.
+
+![Data Flow Diagram](/docs/data-pipeline.png)
+_(Figure 2: The Serverless ETL Pipeline)_
+
+### 1.3 MLOps & Self-Healing Pipeline
+
+The system features an automated "Watchdog" that monitors for Concept Drift. If model performance degrades, the pipeline automatically triggers retraining, evaluation, and zero-downtime deployment.
+
+![MLOps Diagram](/docs/mlops-cycle.png)
+_(Figure 3: Event-Driven MLOps Workflow)_
+
+### 1.4 Model Specifications
+
+The platform utilizes a **Hybrid Inference Strategy**, allocating compute resources based on the specific latency and throughput requirements of each use case:
+
+| Use Case                   | Model Architecture        | Role                                                                                                  | Inference Type                     |
+| :------------------------- | :------------------------ | :---------------------------------------------------------------------------------------------------- | :--------------------------------- |
+| **Point-to-Point Routing** | **STGCN / Graph WaveNet** | Captures complex spatial dependencies between road segments to predict route-specific delays.         | **Real-Time** (SageMaker Endpoint) |
+| **City-Scale Forecasting** | **LSTM / XGBoost**        | Efficiently processes temporal patterns for 15,000+ roads simultaneously to generate the 24h heatmap. | **Batch** (Glue Spark Job)         |
+
+---
+
+## 2. Prerequisites & Configuration
 
 Before deployment or local development, ensure the following tools are installed and configured:
 
@@ -24,7 +64,7 @@ Before deployment or local development, ensure the following tools are installed
 - **Docker:** For building and running the Flask application container.
 - **Python:** (v3.10+) With `pip` and a virtual environment (recommended).
 
-### 1.1 API Keys Required
+### 2.1 API Keys Required
 
 The application requires credentials for both data ingestion (background) and routing (application logic). These should be stored in AWS Secrets Manager and/or a local `.env` file for development.
 
@@ -34,13 +74,13 @@ The application requires credentials for both data ingestion (background) and ro
 
 ---
 
-## 2. Local Development Setup (Mock Data)
+## 3. Local Development Setup (Mock Data)
 
 This section details how to run the application locally for feature development and testing the user interface logic.
 
-### 2.1 Generate Traffic Data Assets
+### 3.1 Generate Traffic Data Assets
 
-We generate decoupled, memory-optimized data files to simulate the output of the full AWS ETL pipeline.
+We generate decoupled, memory-optimized data files to simulate the output of the full AWS ETL pipeline locally.
 
 1.  **Install Dependencies:** Ensure core data packages are available.
     ```bash
@@ -58,7 +98,7 @@ We generate decoupled, memory-optimized data files to simulate the output of the
     mv mock_geometry.json src/frontend/static/
     ```
 
-### 2.2 Run the Flask Application Locally
+### 3.2 Run the Flask Application Locally
 
 Run the server in local development mode, which reads the static JSON files.
 
@@ -72,11 +112,11 @@ python server.py
 
 ---
 
-## 3. Cloud Deployment (Terraform MLOps Pipeline)
+## 4. Cloud Deployment (Terraform MLOps Pipeline)
 
 The infrastructure is provisioned using Terraform, which sets up the full MLOps and Big Data architecture (VPC, ALB, ASG, Glue Jobs, Athena, and SageMaker integration).
 
-### 3.1 Build & Push Container Image
+### 4.1 Build & Push Container Image
 
 1. Build the Docker image:
 
@@ -84,15 +124,20 @@ The infrastructure is provisioned using Terraform, which sets up the full MLOps 
 docker build -t traffic-ai-repo .
 ```
 
-2. Authenticate and Push: Authenticate Docker against AWS ECR and push the tagged image:
+2. Authenticate and Push: Replace <AWS_ACCOUNT_ID> with your actual ID from the step above:
 
 ```bash
-aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 754029048130.dkr.ecr.us-east-1.amazonaws.com
-docker tag traffic-ai-repo:latest [754029048130.dkr.ecr.us-east-1.amazonaws.com/traffic-ai-repo:latest](https://754029048130.dkr.ecr.us-east-1.amazonaws.com/traffic-ai-repo:latest)
-docker push [754029048130.dkr.ecr.us-east-1.amazonaws.com/traffic-ai-repo:latest](https://754029048130.dkr.ecr.us-east-1.amazonaws.com/traffic-ai-repo:latest)
+# Login to ECR
+aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin <AWS_ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com
+
+# Tag the image
+docker tag traffic-ai-repo:latest <AWS_ACCOUNT_ID>[.dkr.ecr.us-east-1.amazonaws.com/traffic-ai-repo:latest](https://.dkr.ecr.us-east-1.amazonaws.com/traffic-ai-repo:latest)
+
+# Push to ECR
+docker push <AWS_ACCOUNT_ID>[.dkr.ecr.us-east-1.amazonaws.com/traffic-ai-repo:latest](https://.dkr.ecr.us-east-1.amazonaws.com/traffic-ai-repo:latest)
 ```
 
-### 3.2 Provision Infrastructure
+### 4.2 Provision Infrastructure
 
 1. Initialize Terraform: Ensure the remote state backend (S3/DynamoDB) is configured.
 
@@ -114,7 +159,7 @@ terraform apply --auto-approve
 
 Note: The successful completion of this step (RTO: ~12 minutes) verifies the full structural resilience of the IaC strategy.
 
-### 3.3 Production Endpoints
+### 4.3 Production Endpoints
 
 Once deployment is complete, the application provides the following key functional endpoints:
 
@@ -143,7 +188,7 @@ curl http://<domain>/healthz
 
 ---
 
-## 4. License
+## 5. License
 
 This project is licensed under the MIT License.
 
