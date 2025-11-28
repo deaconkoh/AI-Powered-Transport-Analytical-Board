@@ -23,8 +23,11 @@ Traffic-AI is built on a modular, event-driven architecture designed for high av
 
 Following a Service-Oriented Architecture, the application layer (Flask) is decoupled from the compute-intensive inference layer (SageMaker) and the data processing layer (Glue), ensuring that user-facing latency remains low even during heavy batch processing.
 
-![Cloud Architecture Diagram](/docs/cloud-architecture.png)
-_(Figure 1: High-Level AWS Architecture showing VPC isolation and PrivateLink connectivity)_
+<div align="center">
+<img src="/docs/cloud-architecture.png" width="50%">
+<br/>
+<em>Figure 1 — High-Level VPC and private connectivity layout</em>
+</div>
 
 ### 1.2 Big Data & ETL Pipeline
 
@@ -34,15 +37,21 @@ We implement a **Medallion Architecture** (Bronze/Silver/Gold) to process ~41 mi
 - **Processing:** AWS Glue (Spark) handles heavy transformations and Parquet conversion.
 - **Serving:** AWS Athena provides a serverless SQL interface for city-scale queries.
 
-![Data Flow Diagram](/docs/data-pipeline.png)
-_(Figure 2: The Serverless ETL Pipeline)_
+<div align="center">
+<img src="/docs/data-pipeline.png" width="70%">
+<br/>
+<em>Figure 2 — Medallion-Stage Dataflow</em>
+</div>
 
 ### 1.3 MLOps & Self-Healing Pipeline
 
 The system features an automated "Watchdog" that monitors for Concept Drift. If model performance degrades, the pipeline automatically triggers retraining, evaluation, and zero-downtime deployment.
 
-![MLOps Diagram](/docs/mlops-cycle.png)
-_(Figure 3: Event-Driven MLOps Workflow)_
+<div align="center">
+<img src="/docs/mlops-cycle.png" width="70%">
+<br/>
+<em>Figure 3 — Retraining, validation and deployment cycle</em>
+</div>
 
 ### 1.4 Model Specifications
 
@@ -187,8 +196,25 @@ curl http://<domain>/healthz
 ```
 
 ---
+## 5. Contributors & Acknowledgement
 
-## 5. License
+| Name | Role / Contribution |
+|------|----------------------|
+| **Deacon Koh** | Cloud Architecture, Big Data & MLOps |
+| **Kenneth Poh** | Big Data Pipeline |
+| **Cheow Ming Yang** | Machine Learning Model Training |
+| **Au Xi Nan Antonio** | Backend Development |
+| **Keith Ang** | Frontend Development |
+
+We extend our gratitude to:  
+- **Singapore Institute of Technology (SIT)** for computing resources and academic guidance.  
+- **Land Transport Authority (LTA)** for access to DataMall live traffic APIs.  
+- **National Environment Agency (NEA)** for real-time weather data integration.  
+- The open-source communities behind **Apache Spark**, **Terraform**, and **MapLibre GL JS** for their powerful frameworks.
+
+---
+
+## 6. License
 
 This project is licensed under the MIT License.
 
