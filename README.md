@@ -14,7 +14,9 @@ This project implements a **Hybrid Inference Architecture** leveraging AWS Glue,
 | **Resilience Proof**    | RTO (Recovery Time Objective): ~14 minutes via IaC                       |
 
 ---
+
 <h2 align="center">Project Demo</h2>
+
 
 <div align="center">
 
@@ -22,6 +24,13 @@ This project implements a **Hybrid Inference Architecture** leveraging AWS Glue,
 
 <br />
 <sub><em>Note: Demo may take a moment to appear.</em></sub>
+<br /><br />
+
+<p align="center">
+  <a href="INF2006_Group15_Final_Report.pdf" style="font-size:18px;">
+    <em>📄 View Project Report</em>
+  </a>
+</p>
 
 </div>
 
